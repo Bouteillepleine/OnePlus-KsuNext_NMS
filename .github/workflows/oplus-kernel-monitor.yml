@@ -373,3 +373,4 @@ jobs:
           git add README.md "${{ env.STATE_FILE }}"
           
           git diff --staged --quiet || (git commit -m "docs: sync kernel status [skip ci]" && git push origin status-page)
+# ci: register on default branch

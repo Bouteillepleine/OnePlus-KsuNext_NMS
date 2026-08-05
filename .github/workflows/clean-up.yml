@@ -1353,3 +1353,4 @@ jobs:
           ```
 
           EOF
+# ci: register on default branch

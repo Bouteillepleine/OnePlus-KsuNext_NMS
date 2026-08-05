@@ -1160,3 +1160,4 @@ jobs:
               echo "- \`$name\` (${size_mb} MB)" >> $GITHUB_STEP_SUMMARY
             fi
           done
+# ci: register on default branch
