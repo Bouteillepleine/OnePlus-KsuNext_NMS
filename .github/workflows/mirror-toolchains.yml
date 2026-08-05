@@ -1,0 +1,425 @@
+name: Mirror static toolchains to GitHub Release
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Ensure Single Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TARGET_REPO="${{ github.repository }}"
+          TAG_NAME="toolchain-cache"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch --tags --force
+
+          if ! git rev-parse -q --verify "refs/tags/$TAG_NAME" >/dev/null; then
+            echo "Tag not found. Creating backdated tag..."
+
+            GIT_COMMITTER_DATE="2015-01-01T12:00:00Z" \
+            GIT_AUTHOR_DATE="2015-01-01T12:00:00Z" \
+            git tag -a "$TAG_NAME" -m "Internal Toolchains Cache"
+
+            git push origin "$TAG_NAME"
+          else
+            echo "Tag '$TAG_NAME' already exists."
+          fi
+
+          if ! gh release view "$TAG_NAME" --repo "$TARGET_REPO" >/dev/null 2>&1; then
+            echo "Release not found. Creating..."
+            gh release create "$TAG_NAME" \
+              --title "Toolchains Mirror Cache" \
+              --notes "Deduplicated Toolchains for Kernel Build" \
+              --repo "$TARGET_REPO"
+          else
+            echo "Release '$TAG_NAME' already exists."
+          fi
+
+  generate-mirror-matrix:
+    runs-on: ubuntu-latest
+    needs: prepare-release
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      count: ${{ steps.set-matrix.outputs.count }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Build Combined Config JSON
+        id: build-config-json
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Finding config JSON files..."
+          mapfile -t files < <(find configs -type f -name "*.json" | sort)
+
+          echo "Found ${#files[@]} config file(s)."
+
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::No JSON config files found under configs/"
+            exit 1
+          fi
+
+          echo "Combining JSON files with Python..."
+
+          python3 - <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          files = sorted(Path("configs").rglob("*.json"))
+
+          configs = []
+          bad_files = []
+
+          for file in files:
+              try:
+                  text = file.read_text(encoding="utf-8-sig")
+
+                  if not text.strip():
+                      bad_files.append((str(file), "File is empty"))
+                      continue
+
+                  data = json.loads(text)
+
+                  if isinstance(data, list):
+                      configs.extend(data)
+                  elif isinstance(data, dict):
+                      configs.append(data)
+                  else:
+                      bad_files.append((str(file), f"Top-level JSON must be object or array, got {type(data).__name__}"))
+
+              except json.JSONDecodeError as e:
+                  bad_files.append((
+                      str(file),
+                      f"JSON decode error at line {e.lineno}, column {e.colno}: {e.msg}"
+                  ))
+              except Exception as e:
+                  bad_files.append((str(file), str(e)))
+
+          if bad_files:
+              print("::error::Invalid JSON config file(s) found")
+              for file, error in bad_files:
+                  print(f"::error file={file}::{error}")
+              sys.exit(1)
+
+          with open("all_configs.json", "w", encoding="utf-8") as f:
+              json.dump(configs, f, ensure_ascii=False, indent=2)
+
+          print(f"✅ Combined {len(configs)} config object(s) from {len(files)} file(s).")
+          PY
+
+          echo "Combined config count:"
+          jq 'length' all_configs.json
+
+          echo "First few configs:"
+          jq '.[0:5] | map({model, os_version, branch, manifest})' all_configs.json
+
+      - name: Resolve Unique Projects
+        id: set-matrix
+        shell: python
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          import xml.etree.ElementTree as ET
+          import json
+          import os
+          import subprocess
+          import shutil
+          import urllib.parse
+          from pathlib import Path
+
+          def gha_output(name, value):
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+                  f.write(f"{name}={value}\n")
+
+          def run_checked(args):
+              subprocess.run(args, check=True)
+
+          def sanitize_filename(value):
+              return (
+                  value.replace("/", "_")
+                       .replace("\\", "_")
+                       .replace(":", "_")
+                       .replace("@", "_")
+                       .replace(" ", "_")
+              )
+
+          def normalize_fetch_url(fetch):
+              if not fetch:
+                  return ""
+
+              return fetch.rstrip("/")
+
+          def build_project_url(base_url, project_name):
+              base_url = base_url.rstrip("/")
+              project_name = project_name.strip("/")
+              return f"{base_url}/{project_name}"
+
+          def build_archive_url(base_url, project_name, rev):
+              project_url = build_project_url(base_url, project_name)
+              encoded_rev = urllib.parse.quote(rev, safe="")
+
+              if "googlesource.com" in project_url:
+                  return f"{project_url}/+archive/{encoded_rev}.tar.gz"
+
+              if "github.com" in project_url:
+                  return f"{project_url}/archive/{encoded_rev}.tar.gz"
+
+              if "git.codelinaro.org" in project_url or "gitlab.com" in project_url:
+                  archive_name = Path(project_name).name
+                  return f"{project_url}/-/archive/{encoded_rev}/{archive_name}-{encoded_rev}.tar.gz"
+
+              raise ValueError(f"Unknown toolchain provider for: {project_url}")
+
+          with open("all_configs.json", "r", encoding="utf-8") as f:
+              configs = json.load(f)
+
+          unique_toolchains = {}
+
+          TOOLCHAIN_MAP = {
+              "clang/host/linux-x86": "clang",
+              "prebuilts/clang/host/linux-x86": "clang",
+              "prebuilts/rust": "rust",
+              "prebuilts/clang-tools": "clang-tools",
+              "prebuilts/build-tools": "build-tools",
+              "prebuilts/kernel-build-tools": "kernel-build-tools",
+              "AnyKernel3": "AnyKernel3",
+          }
+
+          print(f"Processing {len(configs)} configurations...")
+          print("-" * 70)
+
+          processed = 0
+          failed = 0
+
+          for cfg in configs:
+              op_model = cfg.get("model", "Unknown")
+              op_branch = cfg.get("branch", "")
+              op_manifest = cfg.get("manifest", "")
+              op_os_version_raw = cfg.get("os_version", "")
+              op_os_version = op_os_version_raw.lower()
+
+              if not op_manifest:
+                  print(f"⚠️ [{op_model}] Missing manifest, skipping.")
+                  failed += 1
+                  continue
+
+              xml_file = "temp_manifest.xml"
+
+              try:
+                  if op_manifest.startswith("https://"):
+                      print(f"🌐 [{op_model}] Fetching manifest URL: {op_manifest}")
+                      run_checked(["curl", "-LfsS", "--retry", "3", "-o", xml_file, op_manifest])
+
+                  elif op_branch.startswith("wild/"):
+                      local_manifest = Path("manifests") / op_os_version / op_manifest
+                      print(f"📄 [{op_model}] Using local manifest: {local_manifest}")
+
+                      if not local_manifest.exists():
+                          raise FileNotFoundError(f"Local manifest not found: {local_manifest}")
+
+                      shutil.copy(str(local_manifest), xml_file)
+
+                  else:
+                      url = f"https://raw.githubusercontent.com/OnePlusOSS/kernel_manifest/refs/heads/{op_branch}/{op_manifest}"
+                      print(f"🌐 [{op_model}] Fetching OnePlus manifest: {url}")
+                      run_checked(["curl", "-LfsS", "--retry", "3", "-o", xml_file, url])
+
+                  root = ET.parse(xml_file).getroot()
+
+                  remotes = {}
+                  for remote in root.findall("remote"):
+                      name = remote.get("name")
+                      fetch = remote.get("fetch")
+                      if name and fetch:
+                          remotes[name] = normalize_fetch_url(fetch)
+
+                  default = root.find("default")
+                  def_remote = default.get("remote") if default is not None else None
+                  def_rev = default.get("revision") if default is not None else None
+
+                  for project in root.findall("project"):
+                      name = project.get("name")
+                      if not name:
+                          continue
+
+                      type_label = None
+
+                      for repo_key, label in TOOLCHAIN_MAP.items():
+                          if repo_key in name:
+                              type_label = label
+                              break
+
+                      if not type_label:
+                          continue
+
+                      remote_name = project.get("remote", def_remote)
+                      rev = project.get("revision", def_rev)
+
+                      if not remote_name or not rev:
+                          print(f"⚠️ Skipping '{name}' because remote or revision cannot be resolved.")
+                          continue
+
+                      base_url = remotes.get(remote_name, "").rstrip("/")
+
+                      if not base_url:
+                          print(f"⚠️ Skipping '{name}' because remote '{remote_name}' has no fetch URL.")
+                          continue
+
+                      safe_rev = sanitize_filename(rev)
+                      cache_filename = f"{type_label}-{safe_rev}.tar.gz"
+
+                      if cache_filename in unique_toolchains:
+                          print(f"♻️ [{op_model}][{op_os_version_raw}] Existing {type_label}: {rev}")
+                          continue
+
+                      dl_url = build_archive_url(base_url, name, rev)
+
+                      unique_toolchains[cache_filename] = {
+                          "rev": rev,
+                          "url": dl_url,
+                          "name": name,
+                          "type_label": type_label,
+                          "cache_file": cache_filename,
+                      }
+
+                      print(f"🆕 [{op_model}][{op_os_version_raw}] New {type_label}: {rev}")
+                      print(f"    URL: {dl_url}")
+
+                  processed += 1
+
+              except Exception as e:
+                  failed += 1
+                  print(f"⚠️ Failed to process manifest '{op_manifest}' for {op_model}: {e}")
+
+          matrix = {"include": list(unique_toolchains.values())}
+          matrix_json = json.dumps(matrix, separators=(",", ":"))
+
+          gha_output("matrix", matrix_json)
+          gha_output("count", str(len(unique_toolchains)))
+
+          print("-" * 70)
+          print(f"✅ Processed configs: {processed}")
+          print(f"⚠️ Failed configs: {failed}")
+          print(f"✅ Found {len(unique_toolchains)} unique projects to mirror.")
+
+          if len(unique_toolchains) == 0:
+              print("::warning::No toolchain projects found. Mirror job will be skipped.")
+
+  mirror-to-release:
+    name: mirror (${{ matrix.type_label }}, ${{ matrix.rev }})
+    needs:
+      - prepare-release
+      - generate-mirror-matrix
+    if: ${{ needs.generate-mirror-matrix.outputs.count != '0' }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.generate-mirror-matrix.outputs.matrix) }}
+
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Install download tools
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Hosted runners intermittently ship a broken Microsoft/azure-cli apt repo
+          # (packages.microsoft.com "no longer signed"), which makes apt-get update
+          # exit non-zero. Drop those third-party lists so update only hits the valid
+          # Ubuntu repos, and don't let a partial update fail the step.
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list \
+                     /etc/apt/sources.list.d/azure-cli.list 2>/dev/null || true
+          sudo apt-get update -qq || true
+          sudo apt-get install -y --no-install-recommends aria2 pigz
+          sudo apt-get clean
+
+      - name: Sync and Upload Toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TARGET_REPO="${{ github.repository }}"
+          FILENAME="${{ matrix.cache_file }}"
+          DOWNLOAD_URL="${{ matrix.url }}"
+          RELEASE_TAG="toolchain-cache"
+          BASE_URL="https://github.com/${TARGET_REPO}/releases/download/${RELEASE_TAG}"
+
+          echo "🔍 Checking if $FILENAME exists in mirror..."
+
+          # Private repo: github.com/<repo>/releases/download/<tag> 404s without auth,
+          # so query the release asset list via the authenticated gh CLI instead.
+          CACHED_ASSETS="$(gh release view "$RELEASE_TAG" --repo "$TARGET_REPO" --json assets -q '.assets[].name' 2>/dev/null || true)"
+
+          if grep -qxF "$FILENAME" <<<"$CACHED_ASSETS" || grep -qxF "${FILENAME}.partaa" <<<"$CACHED_ASSETS"; then
+            echo "✅ ${{ matrix.type_label }} revision ${{ matrix.rev }} already cached."
+            exit 0
+          fi
+
+          echo "📥 Not found. Downloading ${{ matrix.type_label }} from source..."
+          echo "URL: $DOWNLOAD_URL"
+
+          aria2c \
+            -x16 \
+            -s16 \
+            -k1M \
+            -j5 \
+            --file-allocation=none \
+            --console-log-level=warn \
+            --summary-interval=10 \
+            --retry-wait=5 \
+            --max-tries=10 \
+            --allow-overwrite=true \
+            -o "$FILENAME" \
+            "$DOWNLOAD_URL"
+
+          if [ ! -s "$FILENAME" ]; then
+            echo "::error::Downloaded file is empty: $FILENAME"
+            exit 1
+          fi
+
+          FILE_SIZE="$(stat -c%s "$FILENAME")"
+          echo "Downloaded size: $FILE_SIZE bytes"
+
+          MAX_SIZE=2000000000
+
+          if [ "$FILE_SIZE" -gt "$MAX_SIZE" ]; then
+            echo "⚠️ File > 2GB. Splitting..."
+            split -b 1500M -a 2 "$FILENAME" "${FILENAME}.part"
+
+            for part in "${FILENAME}".part*; do
+              echo "📤 Uploading $part..."
+              gh release upload "$RELEASE_TAG" "$part" --clobber --repo "$TARGET_REPO"
+            done
+          else
+            echo "📤 Uploading single file..."
+            gh release upload "$RELEASE_TAG" "$FILENAME" --clobber --repo "$TARGET_REPO"
+          fi
+
+          echo "✅ Upload complete."

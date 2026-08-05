@@ -1,0 +1,1162 @@
+name: Build and Release OnePlus Kernels
+
+run-name: >-
+  ${{ github.event.inputs.op_target_model != '' && github.event.inputs.op_target_model || github.event.inputs.op_model }}
+  • KSUN
+  • ${{ github.event.inputs.build_timestamp != '' && github.event.inputs.build_timestamp || 'auto timestamp' }}
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  # A new TEST dispatch cancels the previous test build (only the latest matters).
+  # RELEASE builds get their own group and are NEVER auto-cancelled mid-run.
+  group: ${{ github.workflow }}-${{ github.event.inputs.make_release == 'true' && 'release' || 'test' }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event.inputs.make_release != 'true' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      make_release:
+        description: 'Do you want to create a release?'
+        required: true
+        type: boolean
+        default: false
+      op_model:
+        description: 'Select the OnePlus kernels to build'
+        required: true
+        type: choice
+        options:
+          - A16
+          - android16-6.12
+          - android15-6.6
+          - android14-6.1
+          - android13-5.15
+          - android12-5.10
+        default: A16
+      op_target_model:
+        description: 'Optional exact/prefix model: OP12, OP13-CPH, OP-NORD-4, OP12-6.1.118. Case-sensitive. Empty = all.'
+        required: false
+        type: string
+        default: ''
+      ksu_options:
+        description: 'Enter KernelSU Next build json'
+        required: true
+        type: string
+        default: '[{"type":"KSUN","hash":"main"}]'
+      optimize_level:
+        description: "Compiler optimization level"
+        required: true
+        type: choice
+        options: [O2, O3]
+        default: O2
+      clean_build:
+        description: 'Clean build (no ccache)'
+        type: boolean
+        default: false
+      debug:
+        description: 'Enable debug mode: dumping debug related artifacts and show some debug logs'
+        required: false
+        type: boolean
+        default: false
+      enable_adios:
+        description: 'Enable ADIOS I/O scheduler support (5.10/5.15/6.1/6.6/6.12 kernels)'
+        required: false
+        type: boolean
+        default: false
+      mirror_toolchains:
+        description: 'Force toolchain sync before build — REQUIRED on the first run to populate the toolchain cache (auto-on for releases; ~99% of later test runs do not need it)'
+        required: false
+        type: boolean
+        default: false
+      build_timestamp:
+        description: 'Custom kernel build timestamp for uname -a (e.g. "Tue Feb 10 10:01:02 UTC 2026"). Leave empty for current time.'
+        type: string
+        default: ''
+
+jobs:
+  set-op-model:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      device_count: ${{ steps.set-matrix.outputs.count }}
+      active_gki_keys: ${{ steps.set-matrix.outputs.active_gki_keys }}
+      ksu_resolved_hash:    ${{ steps.set-matrix.outputs.ksu_resolved_hash }}
+      ksu_options_normalized: ${{ steps.set-matrix.outputs.ksu_options_normalized }}
+      nomount_version: ${{ steps.set-matrix.outputs.nomount_version }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_HTTP_TIMEOUT: 600
+    steps:
+      - name: 📥 Checkout Code (to access configs/)
+        uses: actions/checkout@v6
+
+      - name: 🔍 Generate build matrix
+        id: set-matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::Matrix generation"
+          
+          input="${{ github.event.inputs.op_model }}"
+          target_model="${{ github.event.inputs.op_target_model }}"
+          ksu_options_raw='${{ github.event.inputs.ksu_options }}'
+          if ! ksu_options_normalized=$(echo "$ksu_options_raw" | jq -c 'map(if .type then .type |= ascii_upcase | if .hash == null then .hash = "main" else . end else error("No type found") end)' 2>&1); then
+            echo "::error::ksu_options validation failed: $ksu_options_normalized"
+            exit 1
+          fi
+          
+          echo "ksu_options_normalized=$ksu_options_normalized" >> $GITHUB_OUTPUT
+          
+          echo "[" > matrix.json
+          mapfile -t all_json_files < <(find configs/ -name "*.json" -print0 | xargs -0 -n1)
+          for i in "${!all_json_files[@]}"; do
+            file="${all_json_files[$i]}"
+            if [ -f "$file" ]; then
+              jq -r '.' "$file" >> matrix.json
+              if [ $((i+1)) -lt ${#all_json_files[@]} ]; then
+                echo "," >> matrix.json
+              fi
+            fi
+          done
+          echo "]" >> matrix.json
+          
+          jq_filter="."
+          
+          case "$input" in
+            A16)
+              jq_filter="map(select(.os_version == \"A16\"))"
+              ;;
+            android*-*.*)
+              # Extract android version and kernel version
+              IFS='-' read -r av kv <<< "$input"
+              
+              # Build android*-* only for A16
+              jq_filter="map(select(.os_version == \"A16\")) | map(select(.android_version == \"$av\" and .kernel_version == \"$kv\"))"
+              
+              echo "ℹ️  Android-Kernel filter applied: $av-$kv"
+              echo "   Restricted to: A16 only"
+              ;;
+            *)
+              echo "::warning::Unknown input '$input'. Using empty filter."
+              jq_filter="map(select(false))"
+              ;;
+          esac
+          
+          filtered=$(jq -c "$jq_filter" matrix.json)
+
+          if [ -n "$target_model" ]; then
+            echo "🎯 Target model filter enabled: $target_model"
+            echo "   Matching exact model OR versioned model prefix."
+            filtered=$(echo "$filtered" | jq -c --arg target "$target_model" '
+              map(select(.model == $target or (.model | startswith($target + "-"))))
+            ')
+          else
+            echo "ℹ️  No target model selected. Building all configs matching op_model='$input'."
+          fi
+
+          count=$(jq 'length' <<<"$filtered")
+          
+          filtered=$(echo "$filtered" | jq '
+            sort_by(
+              (.os_version | gsub("A"; "") | tonumber) * -1,
+              .model
+            )
+          ')
+          
+          if [ "$count" -eq 0 ]; then
+            echo "::error::No config files found for op_model='$input' and op_target_model='${target_model:-<empty>}' after applying filters!"
+            echo ""
+            echo "Available configurations:"
+            jq -r '.[] | "  - \(.model) (\(.os_version), \(.android_version)-\(.kernel_version))"' matrix.json
+            exit 1
+          fi
+          
+          echo "$filtered" | jq '.' > matrix.json
+          echo "$ksu_options_normalized" > ksu_temp.json
+          
+          # For each device + each ksu option → one combined entry
+          merged_matrix=$(jq -n \
+            --slurpfile devices matrix.json \
+            --slurpfile ksu_list ksu_temp.json \
+            '[ $devices[0][] as $dev | $ksu_list[0][] as $ksu | ($dev + {ksu_type: $ksu.type, ksu_hash: $ksu.hash}) ]')
+          
+          rm ksu_temp.json
+          final_count=$(echo "$merged_matrix" | jq 'length')
+          
+          echo "✅ Found $final_count device(s) to build"
+          echo ""
+          echo "Selected devices:"
+          jq -r '.[] | "  - \(.model) (\(.os_version), \(.android_version)-\(.kernel_version), \(.ksu_type) - \(.ksu_hash))"' <<<"$merged_matrix"
+          
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          
+          ksu_type=$(echo "$ksu_options_normalized" | jq -r '.[0].type')
+          ksu_ref=$(echo "$ksu_options_normalized" | jq -r '.[0].hash')
+          
+          KSU_REPO_OWNER="KernelSU-Next"
+          KSU_REPO_NAME="KernelSU-Next"
+          
+          HEAD_REF="refs/heads/${ksu_ref}"
+          TAG_REF="refs/tags/${ksu_ref}"
+          
+          QUERY='query($owner: String!, $name: String!, $headRef: String!, $tagRef: String!, $objRef: String!) {
+            repository(owner: $owner, name: $name) {
+              hb: ref(qualifiedName: $headRef) { t: target { ... on Commit { o: oid } } }
+              ht: ref(qualifiedName: $tagRef) { t: target { ... on Commit { o: oid } } }
+              ho: object(expression: $objRef) { ... on Commit { o: oid } }
+            }
+          }'
+          
+          MAX_RETRIES=3
+          RETRY_COUNT=0
+          RETRY_DELAY=5 # Seconds to wait between retries
+          
+          echo "Resolving $ksu_type hash ($ksu_ref)..."
+          
+          until [ $RETRY_COUNT -ge $MAX_RETRIES ]; do
+            RESULT=$(gh api graphql -f query="$QUERY" -f owner="$KSU_REPO_OWNER" -f name="$KSU_REPO_NAME" -f headRef="$HEAD_REF" -f tagRef="$TAG_REF" -f objRef="$ksu_ref" 2>/dev/null)
+            EXIT_CODE=$?
+            
+            if [ $EXIT_CODE -eq 0 ] && [ ! -z "$RESULT" ]; then
+              echo "  ✅ API Success"
+              break
+            fi
+            
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            echo "::warning::API failed (Attempt $RETRY_COUNT/$MAX_RETRIES). Retrying in ${RETRY_DELAY}s..."
+            sleep $RETRY_DELAY
+          done
+          
+          if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+            echo "::error::GitHub API unreachable. Cannot validate $ksu_ref"
+            exit 1
+          fi
+          
+          resolved_sha=$(echo "$RESULT" | jq -r '.data.repository | (.hb.t.o // .ht.t.o // .ho.o // "unknown")')
+          
+          if [ "$resolved_sha" == "unknown" ]; then
+            echo "::error::Ref/Hash '$ksu_ref' does not exist in $KSU_REPO_OWNER/$KSU_REPO_NAME"
+            exit 1
+          fi
+          
+          echo "  ✅ Resolved: $ksu_type/$ksu_ref → $resolved_sha"
+          echo "ksu_resolved_hash=$resolved_sha" >> "$GITHUB_OUTPUT"
+          
+          # Inject ksu_resolved_hash into each device in the matrix
+          merged_matrix=$(echo "$merged_matrix" | jq  --arg resolved_sha "$resolved_sha" 'map(.ksu_resolved_hash = $resolved_sha)')
+          
+          # NoMount version fetch. nomount.h in Bouteillepleine/kbuild@hookless carries
+          # NM_MODULE_VERSION, which takes over the role SUSFS_VERSION used to play here:
+          # it is the base of the release tag. Resolved once for the whole run so every
+          # device reports the same version, exactly as the susfs version did.
+          mapfile -t active_keys < <(
+            echo "$merged_matrix" \
+              | jq -r '.[] | select(.NMS == true) | "\(.android_version)-\(.kernel_version)"' \
+              | sort -u
+          )
+
+          echo "🔍 NoMount (hookless) enabled for: ${active_keys[*]:-none}"
+
+          # Write CSV list of active GKI versions
+          active_gki_keys_csv=$(IFS=','; echo "${active_keys[*]:-}")
+          echo "active_gki_keys=$active_gki_keys_csv" >> "$GITHUB_OUTPUT"
+
+          NM_HDR_URL="https://raw.githubusercontent.com/Bouteillepleine/kbuild/hookless/hookless/src/nomount.h"
+          nomount_version="unknown"
+
+          for attempt in 1 2 3; do
+            hdr="$(curl -fsSL --max-time 30 "$NM_HDR_URL" || true)"
+            if [ -n "$hdr" ]; then
+              nomount_version="$(printf '%s\n' "$hdr" \
+                | sed -n 's/^#define[[:space:]]\+NM_MODULE_VERSION[[:space:]]\+"\([^"]*\)".*/\1/p' \
+                | head -n1)"
+              if [ -n "$nomount_version" ]; then
+                break
+              fi
+            fi
+            nomount_version="unknown"
+            echo "  ⚠️  Attempt $attempt: could not read NM_MODULE_VERSION, retrying..."
+            sleep 5
+          done
+
+          echo "  ✅ NoMount version: $nomount_version"
+
+          # make_release=true: an unknown version would produce a garbage tag — hard error
+          if [ "${{ inputs.make_release }}" = "true" ] && [ "$nomount_version" = "unknown" ]; then
+            echo "::error::Could not read NM_MODULE_VERSION from kbuild@hookless. Cannot proceed with release."
+            exit 1
+          fi
+
+          echo "nomount_version=$nomount_version" >> "$GITHUB_OUTPUT"
+          
+          merged_matrix=$(echo "$merged_matrix" | jq '
+            sort_by(
+              (.os_version | gsub("A"; "") | tonumber? // 0) * -1,
+              .model
+            )
+          ')
+          
+          echo "$merged_matrix" > final_matrix_temp.json
+          
+          # Recalculate wrapped with updated matrix and write output
+          wrapped=$(jq --slurp '{ include: .[] }' final_matrix_temp.json)
+          echo "matrix=$(echo "$wrapped" | jq -c .)" >> "$GITHUB_OUTPUT"
+          rm final_matrix_temp.json
+          echo "::endgroup::"
+
+      - name: Upload build matrix
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-matrix
+          path: matrix.json
+          archive: false
+          retention-days: 7
+
+      - name: 📊 Build plan summary
+        run: |
+          ksu_type="${{ fromJSON(steps.set-matrix.outputs.ksu_options_normalized)[0].type }}"
+          ksu_ref="${{ fromJSON(steps.set-matrix.outputs.ksu_options_normalized)[0].hash }}"
+          
+          ksu_display=""
+          if [[ "$ksu_ref" =~ ^[0-9a-f]{40}$ ]]; then
+            ksu_display+="📌 \`$ksu_type\`, \`$ksu_ref\`"
+          else
+            ksu_display+="🔀 \`$ksu_type\`, \`$ksu_ref\` (\`${{ steps.set-matrix.outputs.ksu_resolved_hash }}\`)"
+          fi
+          
+          build_ts_input="${{ inputs.build_timestamp }}"
+          if [ -z "$build_ts_input" ]; then
+            build_ts_display="⏱️ auto (current build time)"
+          else
+            build_ts_display="📌 \`$build_ts_input\`"
+          fi
+          
+          {
+            echo "## 🎯 Build Plan"
+            echo ""
+            echo "> **${{ inputs.op_model }}** · **${{ steps.set-matrix.outputs.count }}** device(s) · KSU \`$ksu_type\` · \`${{ inputs.optimize_level }}\`${{ inputs.make_release && ' · 📦 release' || '' }}"
+            echo ""
+            echo "| Setting | Value |"
+            echo "|---------|-------|"
+            echo "| 🎯 Target | \`${{ inputs.op_model }}\` · model \`${{ inputs.op_target_model != '' && inputs.op_target_model || 'all' }}\` · **${{ steps.set-matrix.outputs.count }}** device(s) |"
+            echo "| 🧩 KSU | $ksu_display |"
+            echo "| ⏱️ Timestamp | $build_ts_display |"
+            echo "| ⚙️ Optimization | \`${{ inputs.optimize_level }}\` |"
+            echo "| 🧹 Clean build (no ccache) | ${{ inputs.clean_build && '✅' || '❌' }} |"
+            echo "| 📦 Create release | ${{ inputs.make_release && '✅' || '❌' }} |"
+            echo "| 🔄 Toolchain sync | ${{ (inputs.mirror_toolchains || inputs.make_release) && '✅' || '❌' }}${{ (!inputs.mirror_toolchains && inputs.make_release) && ' · auto for release' || '' }} |"
+            echo "| 🧰 ADIOS · Debug artifacts | ${{ inputs.enable_adios && '✅' || '❌' }} · ${{ inputs.debug && '✅' || '❌' }} |"
+            echo ""
+            echo ""
+            echo "**NoMount (hookless)** — \`maxsteeel/nomount\`, version \`${{ steps.set-matrix.outputs.nomount_version }}\`"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+          
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> **💡 Note:** Hashes are resolved at run time via API calls before builds start." >> $GITHUB_STEP_SUMMARY
+          
+          # Add A restriction note for android-kernel filters
+          if [[ "${{ inputs.op_model }}" == android*-*.* ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "> **⚠️ Android-Kernel Filter:** Only A16 devices will be built for \`${{ inputs.op_model }}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  mirror_toolchain:
+    needs: set-op-model
+    # Run when explicitly requested OR for any release build. The mirror workflow is
+    # idempotent (it HEAD-checks each toolchain in the toolchain-cache release and
+    # skips ones already present, before any download), so on a warm cache this is
+    # just a few quick checks; on a cold cache it auto-populates instead of letting
+    # the build hard-fail with "Toolchain NOT FOUND in cache". Test/iterative builds
+    # (make_release=false) still skip it entirely for fast turnaround.
+    if: ${{ inputs.mirror_toolchains || inputs.make_release }}
+    uses: ./.github/workflows/mirror-toolchains.yml
+    secrets: inherit
+
+  prepare_ccache:
+    name: Prepare ccache binary (download once)
+    runs-on: ubuntu-latest
+    steps:
+      # Download the custom ccache binary ONCE for the whole matrix and share it as
+      # an artifact. Previously every parallel matrix job curl'd the same GitHub raw
+      # URL simultaneously, which made GitHub's edge rate-limit / 504 the CI IPs and
+      # fail the whole build (the URL is fine in a browser -- it's the ~30x parallel
+      # hammering that triggers the throttle).
+      - name: Download custom ccache once
+        run: |
+          set -uo pipefail
+          echo "::group::Download ccache"
+          url="https://raw.githubusercontent.com/WildKernels/kernel_patches/refs/heads/main/ccache/ccache-x86-64"
+          ok=0
+          for attempt in 1 2 3 4 5 6; do
+            if curl -LfsS --connect-timeout 30 --max-time 120 -H "User-Agent: Mozilla/5.0" "$url" -o ccache && [ -s ccache ]; then
+              ok=1; break
+            fi
+            echo "attempt $attempt failed (GitHub raw 504/throttle); backing off..."
+            sleep $(( attempt * 5 + RANDOM % 6 ))
+          done
+          if [ "$ok" = 1 ]; then
+            echo "✅ downloaded ccache once for all matrix jobs"
+          else
+            echo "::warning::custom ccache download failed; matrix jobs will fall back to the apt ccache"
+            rm -f ccache
+          fi
+          echo "::endgroup::"
+      - name: Upload ccache artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ccache-binary
+          path: ccache
+          retention-days: 1
+          if-no-files-found: warn
+
+  build:
+    name: build (${{ matrix.model }}, ${{ matrix.soc }}, ${{ matrix.branch }}, ${{ matrix.manifest }}, ${{ matrix.android_version }}, ${{ matrix.kernel_version }}, ${{ matrix.os_version }}, ${{ matrix.ksu_type }})
+    needs: [set-op-model, mirror_toolchain, prepare_ccache]
+    if: |
+      !cancelled() &&
+      needs.set-op-model.result == 'success' &&
+      (needs.mirror_toolchain.result == 'success' || needs.mirror_toolchain.result == 'skipped')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.set-op-model.outputs.matrix) }}
+    outputs:
+      ksun_ver: ${{ steps.build-stat.outputs.ksu_version }}
+      ksu_ver: ${{ steps.build-stat.outputs.ksu_version }}
+    env:
+      # Total devices in this run — lets the kernel-source-sync step allow a direct
+      # upstream toolchain download on cache-miss for small builds, while the full
+      # matrix still requires the toolchain-cache mirror (avoids 143x upstream hammer).
+      OP_TOTAL_DEVICES: ${{ needs.set-op-model.outputs.device_count }}
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: 🧹 Emergency Disk Cleanup
+        if: ${{ matrix.disk_cleanup }}
+        uses: ./.github/actions/disk-cleanup
+
+      - name: Install Minimal Dependencies
+        run: |
+          set -euo pipefail
+          echo "::group::Install dependencies"
+          sudo apt-get -o Acquire::Retries=3 update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            git curl ca-certificates build-essential clang lld flex bison \
+            libelf-dev libssl-dev libncurses-dev zlib1g-dev liblz4-tool \
+            libxml2-utils rsync unzip dwarves file python3 ccache jq bc dos2unix kmod libdw-dev elfutils pigz
+          sudo apt-get clean
+          echo "✅ Dependencies installed"
+          echo "::endgroup::"
+
+      - name: Get prebuilt ccache (downloaded once by prepare_ccache)
+        uses: actions/download-artifact@v8
+        with:
+          name: ccache-binary
+          path: ccache-dl
+        continue-on-error: true
+
+      - name: Install ccache (ECS by cctv18, shared via artifact)
+        run: |
+          set -uo pipefail
+          echo "::group::Install ccache"
+          if [ -s ccache-dl/ccache ]; then
+            sudo cp -f ccache-dl/ccache /usr/bin/ccache
+            sudo chmod +x /usr/bin/ccache
+            echo "✅ installed custom ccache from shared artifact"
+          else
+            # prepare_ccache could not fetch it (504/throttle); keep the apt ccache
+            # already installed in 'Install Minimal Dependencies'.
+            echo "::warning::shared ccache artifact unavailable; using apt ccache"
+          fi
+          rm -rf ccache-dl
+          echo "[DEBUG] Ccache version : $(ccache --version | head -1)"
+          echo "::endgroup::"
+
+      - name: ♻️ Configure ccache & LTO cache (bounded)
+        run: |
+          echo "::group::Configure ccache environment"
+          set -euo pipefail
+          if command -v ccache >/dev/null 2>&1; then
+            CACHE_DIR="${{ github.workspace }}/.ccache"
+            LDCACHE_DIR="${{ github.workspace }}/.ld_cache"
+            CCACHE_LOG="${{ github.workspace }}/ccache.log"
+            mkdir -p "$CACHE_DIR"
+            mkdir -p "$LDCACHE_DIR"
+            
+            SETTINGS=(
+              "CCACHE_DIR=$CACHE_DIR"
+              "LDCACHE_DIR=$LDCACHE_DIR"
+              "CCACHE_MAXSIZE=12G"
+              "CCACHE_COMPILERCHECK=content"
+              "CCACHE_BASEDIR=${GITHUB_WORKSPACE}"
+              "CCACHE_NOHASHDIR=true"
+              "CCACHE_IGNOREOPTIONS=--sysroot*"
+              "CCACHE_COMPRESSION=true"
+              "CCACHE_COMPRESSION_LEVEL=3"
+              "CCACHE_DIRECT=true"
+              "CCACHE_FILE_CLONE=true"
+              "CCACHE_INODE_CACHE=true"
+              "CCACHE_IS_KERNEL_COMPILING=true"
+              "CCACHE_UMASK=002"
+              "CCACHE_SLOPPINESS=file_macro,time_macros,include_file_mtime,include_file_ctime,pch_defines,system_headers,locale"
+            )
+            
+            for setting in "${SETTINGS[@]}"; do
+              export "$setting"
+              echo "$setting" >> "$GITHUB_ENV"
+            done
+            
+            if [ "${{ inputs.debug }}" == "true" ]; then
+              export "CCACHE_LOGFILE=$CCACHE_LOG"
+              echo "CCACHE_LOGFILE=$CCACHE_LOG" >> "$GITHUB_ENV"
+            fi
+            
+            if ccache --help 2>&1 | grep -q 'depend_mode'; then
+              export CCACHE_DEPEND=true
+              echo "CCACHE_DEPEND=true" >> "$GITHUB_ENV"
+            fi
+            
+            echo "✅ ccache configured successfully"
+            echo "Current ccache configuration:"
+            ccache -p
+          else
+            echo "ccache not found, skipping configuration."
+          fi
+          echo "::endgroup::"
+
+      - name: 🧹 Prepare op_config_json (without KSU fields)
+        id: prepare_config
+        shell: bash
+        run: |
+          echo "config_json=$(jq -nc --argjson m '${{ toJSON(matrix) }}' '$m | del(.ksu_type, .ksu_hash, .ksu_resolved_hash)')" >> "$GITHUB_OUTPUT"
+
+      - name: 🔨 Build Kernel
+        id: build
+        uses: ./.github/actions/build-kernel
+        with:
+          op_config_json: ${{ steps.prepare_config.outputs.config_json }}
+          ksu_type: ${{ matrix.ksu_type }}
+          ksu_branch_or_hash: ${{ matrix.ksu_resolved_hash }}
+          optimize_level: ${{ inputs.optimize_level }}
+          build_timestamp: ${{ inputs.build_timestamp }}
+          enable_adios: ${{ inputs.enable_adios }}
+          clean: ${{ inputs.clean_build }}
+          debug: ${{ inputs.debug }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📊 Build statistics
+        id: build-stat
+        if: always()
+        run: |
+          echo "::group::Build Statistics"
+          
+          echo "Device: ${{ matrix.model }}"
+          echo "OS Version: ${{ matrix.os_version }}"
+          echo "Kernel: ${{ matrix.android_version }}-${{ matrix.kernel_version }}"
+          echo "Status: ${{ job.status }}"
+          
+          if [ "${{ steps.build.outcome }}" = "success" ]; then
+            echo ""
+            echo "✅ Build completed successfully"
+            echo ""
+            echo "Outputs:"
+            echo "  - Kernel: ${{ steps.build.outputs.kernel_version }}"
+            echo "  - KernelSU Next: v${{ steps.build.outputs.ksu_version }}"
+            echo "ksun_ver=" >> "$GITHUB_OUTPUT"
+            echo "ksu_ver=${{ steps.build.outputs.ksu_version }}" >> "$GITHUB_OUTPUT"
+            echo "  - Build time: ${{ steps.build.outputs.build_time }}s"
+            
+            if [ "${{ inputs.clean_build }}" != "true" ]; then
+              echo "  - ccache hit rate: ${{ steps.build.outputs.ccache_hit_rate }}"
+              echo "  - ccache direct rate: ${{ steps.build.outputs.ccache_direct_rate }}"
+            else
+              echo "  - ccache: disabled (clean build)"
+            fi
+            
+            if [ -n "${{ steps.build.outputs.warnings }}" ]; then
+              echo "  - Warnings: ${{ steps.build.outputs.warnings }}"
+            fi
+          else
+            echo "❌ Build failed"
+          fi
+          
+          echo "::endgroup::"
+
+      - name: 📝 Job summary
+        if: always()
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          
+          ### ${{ matrix.model }} (${{ matrix.os_version }}) - ${{ job.status == 'success' && '✅ Success' || '❌ Failed' }}
+          
+          **Kernel:** ${{ matrix.android_version }}-${{ matrix.kernel_version }}
+          EOF
+          
+          
+          if [ "${{ steps.build.outcome }}" = "success" ]; then
+            cat >> $GITHUB_STEP_SUMMARY << EOF
+          | Metric | Value |
+          |--------|-------|
+          | **Kernel** | ${{ steps.build.outputs.kernel_version }} |
+          EOF
+            cat >> $GITHUB_STEP_SUMMARY << EOF
+          | **KernelSU Next** | v${{ steps.build.outputs.ksu_version }} |
+          EOF
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          | **Build Time** | ${{ steps.build.outputs.build_time }}s |
+          EOF
+            
+            if [ "${{ inputs.clean_build }}" != "true" ]; then
+              cat >> $GITHUB_STEP_SUMMARY << EOF
+          | **ccache Hit Rate** | ${{ steps.build.outputs.ccache_hit_rate }} |
+          | **ccache Direct Rate** | ${{ steps.build.outputs.ccache_direct_rate }} |
+          EOF
+            fi
+            
+            if [ -n "${{ steps.build.outputs.warnings }}" ]; then
+              echo "| **Warnings** | ${{ steps.build.outputs.warnings }} |" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            cat >> $GITHUB_STEP_SUMMARY << EOF
+          
+          **Image SHA256:** \`${{ steps.build.outputs.image_sha256 }}\`
+          **AnyKernel3 Zip SHA256:** \`${{ steps.build.outputs.zip_sha256 }}\`
+          EOF
+          fi
+
+      - name: 🧹 Final cleanup and space report
+        if: always()
+        run: |
+          echo "::group::Cleanup"
+          
+          # Remove build artifacts but PRESERVE ccache
+          sudo rm -rf "$GITHUB_WORKSPACE/out" || true
+          sudo rm -rf "$GITHUB_WORKSPACE/build" || true
+          sudo rm -rf "$GITHUB_WORKSPACE/kernel/out" || true
+          sudo rm -rf "$GITHUB_WORKSPACE/.repo" || true
+          sudo rm -rf /tmp/* || true
+          
+          # Show ccache stats (don't clear it!)
+          if command -v ccache >/dev/null 2>&1; then
+            echo ""
+            echo "📊 ccache statistics after build:"
+            ccache -s
+            echo ""
+            echo "💾 ccache preserved for next build"
+          fi
+          
+          echo ""
+          echo "💽 Final disk usage:"
+          df -h /
+          
+          echo "::endgroup::"
+
+  build_report:
+    name: 📋 Build report
+    needs: [set-op-model, build]
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Summarize build results
+        run: |
+          set -uo pipefail
+          # Pull every "build (...)" matrix job's final conclusion for this run.
+          jobs="$(gh api --paginate \
+            "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100" \
+            --jq '.jobs[] | select(.name|startswith("build (")) | "\(.conclusion)\t\(.name)"')"
+
+          total=$(printf '%s\n' "$jobs" | grep -c . || true)
+          ok=$(printf '%s\n'    "$jobs" | grep -c   '^success' || true)
+          bad=$(printf '%s\n'   "$jobs" | grep -cvE '^success' || true)
+
+          {
+            echo "## 📋 Build Report"
+            echo ""
+            echo "**✅ ${ok} succeeded · ❌ ${bad} failed · ${total} total**"
+            if [ "${bad:-0}" -gt 0 ]; then
+              echo ""
+              echo "### ❌ Failed / cancelled"
+              echo ""
+              echo "| Device | Result |"
+              echo "|--------|--------|"
+              printf '%s\n' "$jobs" | grep -vE '^success' | while IFS=$'\t' read -r concl name; do
+                dev=$(printf '%s' "$name" | sed -E 's/^build \(([^,]+),[^,]+,[^,]+,[^,]+, *([^,]+), *([^,]+), *([^,]+),.*/\1 (\2-\3, \4)/')
+                echo "| \`${dev}\` | ${concl:-unknown} |"
+              done
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  trigger-release:
+    needs: [set-op-model, build]
+    runs-on: ubuntu-latest
+    if: |
+      !cancelled() &&
+      inputs.make_release == true &&
+      needs.build.result == 'success' &&
+      needs.set-op-model.result == 'success'
+    env:
+      REPO_OWNER: ${{ github.repository_owner }}
+      REPO_NAME: ${{ github.event.repository.name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      NOMOUNT_VERSION: ${{ needs.set-op-model.outputs.nomount_version }}
+      RELEASE_NAME: 'KernelSU Next 📦 NoMount (v${{ needs.set-op-model.outputs.nomount_version }})'
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: 🏷️ Generate and Create New Tag
+        run: |
+          # Tags are nm<version>-r<n>, e.g. nm12-r1 — the NoMount analogue of the old
+          # susfs v2.2.0-r<n> scheme, and distinct from it so old tags never collide.
+          TAG_BASE="nm${NOMOUNT_VERSION}"
+
+          LATEST_MATCHING_TAG=$(gh api repos/$REPO_OWNER/$REPO_NAME/tags \
+            --jq "[.[] | select(.name | startswith(\"${TAG_BASE}-r\"))] \
+                  | sort_by(.name | split(\"-r\")[1] | tonumber) \
+                  | last | .name // empty")
+          
+          if [ -z "$LATEST_MATCHING_TAG" ]; then
+            # No existing release for this NoMount version → first release
+            NEW_TAG="${TAG_BASE}-r1"
+          else
+            # Only increment the -r* suffix of the latest release for this version
+            NEW_TAG=$(echo "$LATEST_MATCHING_TAG" | awk -F'-r' '{printf "%s-r%d", $1, $2+1}')
+          fi
+          
+          echo "New tag: $NEW_TAG"
+          echo "NEW_TAG=${NEW_TAG}" >> $GITHUB_ENV
+          # Do NOT `git push` the tag: the Actions GITHUB_TOKEN is refused when a pushed ref's
+          # tree contains .github/workflows/* ("without workflows permission"). The tag is
+          # created instead by `gh release create --target` below (REST API — not subject to
+          # the git-push workflow check), so no PAT is needed.
+
+      - name: 📥 Download Artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: ./downloaded-artifacts
+          merge-multiple: true
+          skip-decompress: true
+
+      - name: 🔐 Generate Checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! compgen -G "./downloaded-artifacts/*.zip" > /dev/null; then
+            echo "::error::No ZIP artifacts found."
+            find ./downloaded-artifacts -maxdepth 2 -type f -print || true
+            exit 1
+          fi
+
+          cd downloaded-artifacts
+          sha256sum *.zip | sort -k2 > ../00_CHECKSUMS.txt
+          cd ..
+
+          echo "Generated 00_CHECKSUMS.txt:"
+          cat 00_CHECKSUMS.txt
+
+      - name: 📥 Generate Downloads Index
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          {
+            echo "# 📥 OnePlus Kernel Downloads"
+            echo ""
+            echo "> Select the ZIP matching your exact **device**, **OS version**, and **kernel base**."
+            echo ""
+            echo "## ⚠️ Important"
+            echo ""
+            echo "- Flashing the wrong ZIP may cause bootloop."
+            echo "- Back up your current boot/init_boot/vendor_boot before flashing."
+            echo "- Use Kernel Flasher or another trusted flashing method."
+            echo "- If switching from Magisk, APatch, KernelSU, KernelSU Next, or another fork, clean old root leftovers carefully."
+            echo ""
+            echo "## Quick Guide"
+            echo ""
+            echo "| What to check | Example |"
+            echo "|---|---|"
+            echo "| **Device** | \`OP12\`, \`OP13r\`, \`OP-NORD-4\` |"
+            echo "| **OS Version** | \`A16\` |"
+            echo "| **Kernel Base** | \`android15-6.6.30\`, \`android14-6.1.75\` |"
+            echo "| **Root Type** | \`KSUN\` |"
+            echo ""
+          } > 00_DOWNLOADS.md
+
+          for os in A16; do
+            mapfile -t files < <(find downloaded-artifacts -maxdepth 1 -type f -name "*_${os}_*.zip" | sort)
+
+            if [ "${#files[@]}" -eq 0 ]; then
+              continue
+            fi
+
+            {
+              echo "## ${os}"
+              echo ""
+              echo "| Device | Kernel | Root | NoMount | Download | SHA256 |"
+              echo "|---|---|---|---|---|---|"
+            } >> 00_DOWNLOADS.md
+
+            for file in "${files[@]}"; do
+              name="$(basename "$file")"
+              zipname="${name%.zip}"
+              rest="${zipname#AK3_}"
+
+              IFS='_' read -ra parts <<< "$rest"
+
+              model="${parts[0]:-unknown}"
+              os_version="${parts[1]:-unknown}"
+              kernel_version="${parts[2]:-unknown}"
+              ksu_type="${parts[3]:-unknown}"
+              ksu_ver="${parts[4]:-unknown}"
+
+              nm_ver="none"
+              if [ "${parts[5]:-}" = "NoMount" ]; then
+                nm_ver="${parts[6]:-unknown}"
+              fi
+
+              sha="$(sha256sum "$file" | awk '{print $1}')"
+              short_sha="${sha:0:12}"
+              asset_url="${{ github.server_url }}/${{ github.repository }}/releases/download/${{ env.NEW_TAG }}/${name}"
+
+              echo "| \`${model}\` | \`${kernel_version}\` | \`${ksu_type}-${ksu_ver}\` | \`${nm_ver}\` | [Download](${asset_url}) | \`${short_sha}...\` |" >> 00_DOWNLOADS.md
+            done
+
+            echo "" >> 00_DOWNLOADS.md
+          done
+
+          {
+            echo "---"
+            echo ""
+            echo "## 🔐 Full SHA256 Checksums"
+            echo ""
+            echo "Use \`00_CHECKSUMS.txt\` from this release to verify downloads."
+            echo ""
+            echo '```bash'
+            echo "sha256sum -c 00_CHECKSUMS.txt"
+            echo '```'
+          } >> 00_DOWNLOADS.md
+
+          echo "Generated 00_DOWNLOADS.md:"
+          cat 00_DOWNLOADS.md
+
+      - name: 📝 Generate Device List and Final Release Notes
+        id: generate-notes
+        run: |
+          echo "=== Start building the release notes ==="
+          
+          # Remove ccache-binary artifacts
+          rm -f ./downloaded-artifacts/ccache-binary.zip
+          
+          # Collect build metadata
+          declare -A device_info
+          
+          JSON_BUILD_DATA=$(jq -c '.' ./downloaded-artifacts/matrix.json)
+          
+          for file in $(find downloaded-artifacts -maxdepth 1 -name "*.zip" -type f | sort); do
+            if [ -f "$file" ]; then
+              zipname=$(basename "$file" .zip)
+              rest="${zipname#AK3_}"
+              IFS='_' read -ra parts <<< "$rest"
+              model="${parts[0]}"
+              os_version="${parts[1]}"
+              kernel_version="${parts[2]}"
+              ksu_type="${parts[3]}"
+              ksu_ver="${parts[4]}"
+              if [ "${parts[5]:-}" = "NoMount" ]; then
+                nm_ver="${parts[6]:-unknown}"
+              else
+                nm_ver="none"
+              fi
+              full_model="${model}_${os_version}_${kernel_version}"
+              device_info["$full_model"]="$model|$os_version|$kernel_version|$ksu_type|$ksu_ver|$nm_ver|$zipname"
+            fi
+          done
+          
+          ksu_type="${{ fromJSON(needs.set-op-model.outputs.ksu_options_normalized)[0].type }}"
+          ksu_ref="${{ fromJSON(needs.set-op-model.outputs.ksu_options_normalized)[0].hash }}"
+          ksu_resolved_hash="${{ needs.set-op-model.outputs.ksu_resolved_hash }}"
+          
+          OPTIMIZE_LEVEL="${{ inputs.optimize_level }}"
+          CLEAN_BUILD="${{ inputs.clean_build }}"
+          
+          
+          
+          cat << EOF > release_notes.md
+          # KernelSU Next 📦 NoMount (v$NOMOUNT_VERSION)
+          
+          > **Build Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')  
+          > **Build ID:** \`${{ github.run_id }}\`  
+          > **Workflow:** [\`${{ github.workflow }}\`](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          
+          ---
+          
+          ## 📦 Built Devices (${#device_info[@]} total)
+
+          **Feature key:** 🐦 HMBIRD · 🫥 NoMount · 🚀 BBR · 🛡️ BBG · 🌐 TTL · 🧱 IP_SET & IPv6 NAT · 🔧 Unicode Fix · 💻 Droidspaces · 🔃 NTSync
+
+          > 6.12 kernels ship a leaner set (no BBG/Droidspaces/NTSync); SM8750/MT6991 devices add HMBIRD.
+
+          <details>
+          <summary>📥 Expand the full list of ${#device_info[@]} device downloads</summary>
+
+          | Model | OS Version | Kernel Version | Features |
+          |-------|------------|----------------|----------|
+          EOF
+          
+          while IFS= read -r full_key; do
+            [ -z "$full_key" ] && continue
+            
+            IFS='|' read -r model os_ver kernel_ver _ _ _ zipfile <<< "${device_info["$full_key"]}"
+            
+            # Use jq to extract feature flags for this model from the JSON matrix.
+            # Reconstruct the original model name (e.g. OP13r-6.1.118) in case the ZIP
+            # had the kernel version suffix stripped for display. Try exact ORIG_MODEL
+            # first, fall back to base MODEL, both filtered by os_version.
+            full_kv=$(echo "$kernel_ver" | sed 's/^[^-]*-//')
+            possible_orig_model="${model}-${full_kv}"
+            feature_flags=$(jq -r --arg MODEL "$model" --arg ORIG_MODEL "$possible_orig_model" --arg OS "$os_ver" '
+              ([ .[] | select(.model == $ORIG_MODEL and .os_version == $OS) ][0]) //
+              ([ .[] | select(.model == $MODEL      and .os_version == $OS) ][0]) |
+              "\(.hmbird // false)\t\(.NMS // false)\t\(.bbr // false)\t\(.bbr3 // false)\t\(.bbg // false)\t\(.ttl // false)\t\(.ip_set // false)\t\(.unicode // false)\t\(.ds // false)\t\(.ntsync // false)"
+            ' <<< "$JSON_BUILD_DATA")
+            
+            features=()
+             # If no match found, skip or handle error
+            if [[ -z "$feature_flags" ]]; then
+              echo "Warning: No JSON entry found for model: $model" >&2
+              features_str="N/A"
+            else
+              IFS=$'\t' read -r hmbird nms bbr bbr3 bbg ttl ip_set unicode ds ntsync <<< "$feature_flags"
+              
+              # Build features string based on boolean values
+              [[ "$hmbird" == "true" ]] && features+=("🐦 HMBIRD")
+              [[ "$nms" == "true" ]] && features+=("🫥 NoMount")
+              { [[ "$bbr" == "true" ]] || [[ "$bbr3" == "true" ]]; } && features+=("🚀 BBR")
+              [[ "$bbg" == "true" ]] && features+=("🛡️ BBG")
+              [[ "$ttl" == "true" ]] && features+=("🌐 TTL")
+              [[ "$ip_set" == "true" ]] && features+=("🧱 IP_SET & IPv6 NAT")
+              [[ "$unicode" == "true" ]] && features+=("🔧 Unicode Fix")
+              [[ "$ds" == "true" ]] && features+=("💻 Droidspaces")
+              [[ "$ntsync" == "true" ]] && features+=("🔃 NTSync")
+              
+              total=${#features[@]}
+              if [ $total -eq 0 ]; then
+                features_str="N/A"
+              else
+                features_str=""
+                count=0
+                
+                for item in "${features[@]}"; do
+                  count=$((count + 1))
+                  
+                  features_str+="$item"
+                  
+                  if [ $count -lt $total ]; then
+                    if [ $((count % 3)) -eq 0 ]; then
+                      features_str+="<br>"
+                    else
+                      features_str+="   "
+                    fi
+                  fi
+                done
+              fi
+            fi
+            
+            if [[ "$os_ver" =~ ^A[0-9]+$ ]]; then
+              os_display_version="Android ${os_ver#A}"
+            else
+              os_display_version=$os_ver
+            fi
+            
+            download_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${NEW_TAG}/${zipfile}.zip"
+            model_link="[$model]($download_url)"
+            printf "| %s | %-10s | %-16s | %-48s |\n" \
+              "$model_link" "$os_display_version" "$kernel_ver" "$features_str" >> release_notes.md
+          done < <(printf '%s\n' "${!device_info[@]}" | sort)
+          
+          if [ ${#device_info[@]} -gt 0 ]; then
+            first_entry=$(printf '%s\n' "${!device_info[@]}" | sort | head -n1)
+            IFS='|' read -r _ _ _ _ ksu_ver_global _ _ <<< "${device_info["$first_entry"]}"
+          else
+            echo "::error::No device info found!" >&2
+            exit 1
+          fi
+          
+          cat << EOF >> release_notes.md
+
+          </details>
+
+          ---
+
+          ## 🔧 Build Configuration
+          
+          | Component | Version/Setting |
+          |-----------|----------------|
+          EOF
+          # Display function: hash → direct hash, branch → branch (hash)
+          ksu_display_value() {
+            local input="$1"
+            local resolved="$2"
+            if [[ "$input" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "$input"
+            else
+              echo "$input ($resolved)"
+            fi
+          }
+          
+          ksu_display=$(ksu_display_value "$ksu_ref" "$ksu_resolved_hash")
+          cat << EOF >> release_notes.md
+          | **KernelSU Next Branch** | \`$ksu_display\` |
+          | **KernelSU Next Version** | \`$ksu_ver_global\` |
+          EOF
+          cat << EOF >> release_notes.md
+          | **NoMount Version** | \`$NOMOUNT_VERSION\` |
+          | **Optimization Level** | \`$OPTIMIZE_LEVEL\` |
+          | **Clean Build** | $( [ "$CLEAN_BUILD" = "true" ] && echo "✅ Yes (no ccache)" || echo "❌ No (ccache enabled)" ) |
+          | **Compiler** | Clang (version varies by device) |
+          
+          ### 📌 NoMount Source
+          
+          | Component | Source |
+          |-----------|--------|
+          | NoMount (hookless) | [\`maxsteeel/nomount\`](https://github.com/maxsteeel/nomount) |
+          
+          ---
+          
+          ## ✨ Features & Capabilities
+          
+          ### 🔐 Root Management
+          EOF
+          cat << EOF >> release_notes.md
+          - **KernelSU Next** - Kernel-level root solution
+          EOF
+          cat << EOF >> release_notes.md
+          - **NoMount $NOMOUNT_VERSION** - Mountless (hookless VFS) root hiding
+          EOF
+          if [ "${ksu_ver_global:-0}" -lt 12884 ]; then
+            cat << EOF >> release_notes.md
+          - **Manual Hooks** - scope_min_manual_hooks_v1.4 for better compatibility
+          EOF
+          fi
+          cat << EOF >> release_notes.md
+          ### 🛡️ Hiding & Security
+          - **NoMount (hookless VFS redirection)** — modules served with **no mounts**, so there's no overlay/bind mount for a detector to find (`CONFIG_NOMOUNT=y`).
+          - Ptrace-leak fix (kernels < 5.16), Unicode path fix.
+          
+          ### 🚀 Performance & Networking
+          - BBR, CAKE/PIE qdiscs, WireGuard, IP Set, IPv6 NAT, TTL.
+          - LTO + ccache builds, general memory/I/O/scheduler tuning.
+          
+          ### 🔧 System
+          - HMBIRD SCX (SM8750/MT6991), NTSync, Droidspaces, TMPFS xattr/ACL.
+          
+          ---
+          
+          ## 📱 Manager Applications
+          
+          ### Official Manager
+          EOF
+          cat << EOF >> release_notes.md
+          - **KernelSU Next Manager** *(install the version matching the kernel — see \`KernelSU Next Version\` in Build Configuration above)*
+            → [GitHub Release](https://github.com/KernelSU-Next/KernelSU-Next/releases)
+          EOF
+          cat << EOF >> release_notes.md
+          ### Recomended Flasher
+          - **Kernel Flasher** (Required for flashing AnyKernel3 zips and backups and OTA)  
+            → [GitHub Release](https://github.com/fatalcoder524/KernelFlasher/releases)
+          
+          ---
+          
+          ## 📥 Installation Instructions
+          
+          ### Prerequisites
+          - Unlocked bootloader.
+          - Backup your current boot image.
+          - Have root access using Magisk / KernelSU / Apatch (Any forks).
+          
+          ### Via Kernel Flasher
+          1. Download the correct AnyKernel3 ZIP for your device.
+          2. Flash the ZIP to the active slot using Kernel Flasher.
+          3. Install the KernelSU Next Manager APK, same version as mentioned in the AnyKernel3 ZIP name.
+          4. Open the KernelSU Next app.
+          5. In **KernelSU Next Manager**, install the **NoMount Suite** module (Modules → Install from storage → the NoMount Suite ZIP from this release). Remove any existing metamodule and reboot first if you have one.
+          6. Reboot the device.
+
+          > **NoMount is built into the kernel** and driven by the **NoMount Suite** metamodule (included in this release). Flash the kernel ZIP, flash NoMount Suite, then reboot — hiding is served **mountlessly**, with no overlay mounts.
+
+          ---
+          
+          ## 📜 Changelog
+
+          See the [Releases page](${{ github.server_url }}/${{ github.repository }}/releases) for the full history.
+          
+          ---
+          
+          ## 🙏 Credits
+          
+          **KernelSU Next Team**, **NoMount** (maxsteeel & Contributors), **WildKernels**, **OnePlus** (kernel source), and community testers.
+          
+          EOF
+          
+          echo "--- Final Release Notes ---"
+          cat release_notes.md
+
+      - name: 🚀 Create GitHub Release
+        run: |
+          gh release create "${{ env.NEW_TAG }}" \
+            --repo "${{ env.REPO_OWNER }}/${{ env.REPO_NAME }}" \
+            --target "${{ github.sha }}" \
+            --title "${{ env.RELEASE_NAME }}" \
+            --notes-file release_notes.md \
+            --draft
+
+      - name: 📤 Upload Release Assets Dynamically
+        run: |
+          for file in ./downloaded-artifacts/*.zip; do
+            if [ -f "$file" ]; then
+              echo "Uploading $file..."
+              gh release upload "${{ env.NEW_TAG }}" "$file" --clobber
+            fi
+          done
+          for meta in 00_CHECKSUMS.txt 00_DOWNLOADS.md; do
+            if [ -f "$meta" ]; then
+              echo "Uploading $meta..."
+              gh release upload "${{ env.NEW_TAG }}" "$meta" --clobber
+            fi
+          done
+
+      - name: 📊 Release summary
+        if: success()
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          
+          ---
+          
+          ## 🎉 Release Created Successfully
+          
+          **Tag:** [\`${{ env.NEW_TAG }}\`](${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ env.NEW_TAG }})  
+          **Kernels:** $(find ./downloaded-artifacts -maxdepth 1 -name "*.zip" -type f | wc -l)
+          
+          ### 📦 Assets
+          EOF
+          
+          for zip in ./downloaded-artifacts/*.zip; do
+            if [ -f "$zip" ]; then
+              name=$(basename "$zip")
+              size=$(stat -c%s "$zip")
+              size_mb=$(echo "scale=2; $size / 1024 / 1024" | bc)
+              echo "- \`$name\` (${size_mb} MB)" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
