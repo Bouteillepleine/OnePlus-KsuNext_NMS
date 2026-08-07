@@ -444,8 +444,8 @@ runs:
         set -euo pipefail
         echo "::group::Set build user/host"
                 
-        BUILD_USER="OnePlus"
-        BUILD_HOST="ubuntu-build"
+        BUILD_USER="kleaf"
+        BUILD_HOST="build-host"
         
         echo "BUILD_USER=$BUILD_USER" >> "$GITHUB_ENV"
         echo "BUILD_HOST=$BUILD_HOST" >> "$GITHUB_ENV"
