@@ -71,7 +71,7 @@ on:
         type: boolean
         default: false
       build_timestamp:
-        description: 'Custom kernel build timestamp for uname -a (e.g. "Tue Feb 10 10:01:02 UTC 2026"). Leave empty for current time.'
+        description: 'Custom kernel build timestamp for uname -a (e.g. "Fri Dec 5 02:05:55 UTC 2025"). Leave empty for current time.'
         type: string
         default: ''
 
