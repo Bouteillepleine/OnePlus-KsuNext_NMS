@@ -29,6 +29,7 @@ Every release contains **two things**. Flash the kernel first, then add the NoMo
 | **What it is** | AnyKernel3 ZIP (`AK3_<device>_…zip`) with `KernelSU Next` root and `CONFIG_NOMOUNT=y` compiled in | `00_NoMount-Module-vX.Y.Z.zip` — the metamodule that switches NoMount **on** |
 | **Where it comes from** | This repo's GitHub Actions — one ZIP per device | The separate **[NoMount project](https://github.com/maxsteeel/nomount)** — attached to each release as an add-on (sorted to the top of the Assets list) |
 | **How you install it** | Flash with **Kernel Flasher** or **KernelSU Next Manager** | **KernelSU Next Manager → Modules → Install from storage** |
+| **Get it now** | [⬇️ Latest release](https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/releases/latest) | [⬇️ Latest release](https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/releases/latest) — it's at the top of the Assets list |
 
 > [!IMPORTANT]
 > **The kernel on its own does nothing visible.** NoMount is *compiled in* but stays **dormant** until the **add-on module** activates it. The module is the part that carries your injection rules, the WebUI, and the spoofing — think of it like a Magisk/KSU module. **You need both.**
