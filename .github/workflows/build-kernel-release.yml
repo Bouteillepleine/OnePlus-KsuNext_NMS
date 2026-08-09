@@ -901,21 +901,29 @@ jobs:
           cat << EOF > release_notes.md
           # KernelSU Next 📦 NoMount (v$NOMOUNT_VERSION)
           
-          > **Build Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')  
-          > **Build ID:** \`${{ github.run_id }}\`  
-          > **Workflow:** [\`${{ github.workflow }}\`](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-          
+          **A custom OnePlus kernel + a mountless hiding add-on.** Two downloads: flash the kernel, then add the module on top.
+
           ---
-          
-          ## 🔴 REQUIRED — Step 2: install the NoMount module
 
-          The kernel below has NoMount **built in**, but the **module is what activates it**. After flashing the kernel and rebooting:
+          ## 🧩 This release is **two** things
 
-          ### ➡️ [⬇️ Download the module: \`$MOD_ASSET\`](${{ github.server_url }}/${{ github.repository }}/releases/download/${NEW_TAG}/$MOD_ASSET)
+          | | Download | Where it's from | How to install |
+          |---|---|---|---|
+          | 1️⃣ **Kernel** | \`AK3_<device>_…zip\` (pick yours below) | built by this repo's CI | Kernel Flasher / KernelSU Next Manager |
+          | 2️⃣ **NoMount add-on** | \`$MOD_ASSET\` | the separate [NoMount project](https://github.com/maxsteeel/nomount) | KernelSU Next Manager → Modules → Install from storage |
 
-          Then open your root manager → **Modules → Install from storage** → select \`$MOD_ASSET\` → **reboot**.
+          > The kernel has NoMount **compiled in but dormant** — the **add-on module activates it**. You need both.
 
-          > _(It's also in the Assets list below — named to sort to the top — but the link above skips past all the kernel ZIPs.)_
+          ## 🔴 REQUIRED — Step 2: install the NoMount add-on
+
+          After flashing the kernel and rebooting:
+
+          ### ➡️ [⬇️ Download the add-on: \`$MOD_ASSET\`](${{ github.server_url }}/${{ github.repository }}/releases/download/${NEW_TAG}/$MOD_ASSET)
+
+          Then: KernelSU Next Manager → **Modules → Install from storage** → select \`$MOD_ASSET\` → **reboot**.
+
+          > _It's also pinned to the top of the Assets list below — the link above just skips past all the kernel ZIPs._
+          > _One metamodule at a time: remove any existing metamodule and reboot before installing this one._
 
           ---
 
@@ -1090,7 +1098,7 @@ jobs:
             → [GitHub Release](https://github.com/KernelSU-Next/KernelSU-Next/releases)
           EOF
           cat << EOF >> release_notes.md
-          ### Recomended Flasher
+          ### Recommended Flasher
           - **Kernel Flasher** (Required for flashing AnyKernel3 zips and backups and OTA)  
             → [GitHub Release](https://github.com/fatalcoder524/KernelFlasher/releases)
           
@@ -1101,7 +1109,7 @@ jobs:
           ### Prerequisites
           - Unlocked bootloader.
           - Backup your current boot image.
-          - Have root access using Magisk / KernelSU / Apatch (Any forks).
+          - Have root access using Magisk / KernelSU / APatch (any fork).
           
           ### Via Kernel Flasher
           1. Download the correct AnyKernel3 ZIP for your device.
@@ -1127,6 +1135,11 @@ jobs:
           
           EOF
           
+          cat << EOF >> release_notes.md
+
+          ---
+          <sub>Build: $(date -u '+%Y-%m-%d %H:%M UTC') · run \`${{ github.run_id }}\` · [workflow log](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})</sub>
+          EOF
           echo "--- Final Release Notes ---"
           cat release_notes.md
 
