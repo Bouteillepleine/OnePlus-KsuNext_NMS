@@ -22,9 +22,9 @@
 
 ## 🧩 It's a kernel **+** an add-on — two separate downloads
 
-Every release contains **two things**. Flash the kernel first, then add the NoMount module on top of it.
+Every release contains **two things**. Flash the kernel first, then add NoMount Suite on top of it.
 
-|  | 1️⃣ The kernel — *built here* | 2️⃣ NoMount module — *the add-on* |
+|  | 1️⃣ The kernel — *built here* | 2️⃣ NoMount Suite — *the add-on* |
 |---|---|---|
 | **What it is** | AnyKernel3 ZIP (`AK3_<device>_…zip`) with `KernelSU Next` root and `CONFIG_NOMOUNT=y` compiled in | `00_NoMount-Module-vX.Y.Z.zip` — the metamodule that switches NoMount **on** |
 | **Where it comes from** | This repo's GitHub Actions — one ZIP per device | The separate **[NoMount project](https://github.com/maxsteeel/nomount)** — attached to each release as an add-on (sorted to the top of the Assets list) |
@@ -32,7 +32,7 @@ Every release contains **two things**. Flash the kernel first, then add the NoMo
 | **Get it now** | [⬇️ Latest release](https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/releases/latest) | [⬇️ Latest release](https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/releases/latest) — it's at the top of the Assets list |
 
 > [!IMPORTANT]
-> **The kernel on its own does nothing visible.** NoMount is *compiled in* but stays **dormant** until the **add-on module** activates it. The module is the part that carries your injection rules, the WebUI, and the spoofing — think of it like a Magisk/KSU module. **You need both.**
+> **The kernel on its own does nothing visible.** NoMount is *compiled in* but stays **dormant** until the **NoMount Suite** module activates it. NoMount Suite is the part that carries your injection rules, the WebUI, and the spoofing — think of it like a Magisk/KSU module. **You need both.**
 
 ---
 
@@ -79,7 +79,7 @@ configs/
    - the **`00_NoMount-Module-vX.Y.Z.zip`** add-on (top of the Assets list).
 2. **Flash the kernel** ZIP with **Kernel Flasher** (or **KernelSU Next Manager**).
 3. **Install the KernelSU Next Manager APK** — use the version shown as `KernelSU Next Version` in the release notes.
-4. 🧩 **Add the NoMount module:** KernelSU Next Manager → **Modules → Install from storage** → select `00_NoMount-Module-…zip`.
+4. 🧩 **Add NoMount Suite:** KernelSU Next Manager → **Modules → Install from storage** → select `00_NoMount-Module-…zip`.
    > Already have a metamodule? Remove it and reboot **first** — only one metamodule can be active at a time.
 5. **Reboot.**
 6. Open **KernelSU Next Manager → NoMount Suite → Open** — the WebUI should show **Active** with your rules.
@@ -91,15 +91,15 @@ configs/
 
 ## 🔄 Updating &amp; removing
 
-- **Update** — re-flash the kernel ZIP **and** the NoMount add-on together (keep them a matched set).
+- **Update** — re-flash the kernel ZIP **and** NoMount Suite together (keep them a matched set).
 - **After an OTA** — the system update restores the stock kernel; just re-flash the release.
-- **Remove** — delete the NoMount module in KernelSU Next Manager and reboot, then flash a stock boot image (or take an OTA) to drop the custom kernel.
+- **Remove** — delete NoMount Suite in KernelSU Next Manager and reboot, then flash a stock boot image (or take an OTA) to drop the custom kernel.
 
 ---
 
 ## ❓ FAQ
 
-**Do I really need the module?** Yes. The kernel ships NoMount **dormant**; the add-on activates it. No module → no hiding.
+**Do I really need the module?** Yes. The kernel ships NoMount **dormant**; NoMount Suite activates it. No Suite → no hiding.
 
 **Where does the module come from?** It's a **separate add-on**, maintained in the [NoMount project](https://github.com/maxsteeel/nomount) and attached to each release as `00_NoMount-Module-vX.Y.Z.zip` (named to sort to the top of the Assets).
 

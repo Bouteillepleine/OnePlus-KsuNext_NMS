@@ -907,15 +907,15 @@ jobs:
           | | Download | Where it's from | How to install |
           |---|---|---|---|
           | 1️⃣ **Kernel** | \`AK3_<device>_…zip\` (pick yours below) | built by this repo's CI | Kernel Flasher / KernelSU Next Manager |
-          | 2️⃣ **NoMount add-on** | \`$MOD_ASSET\` | the separate [NoMount project](https://github.com/maxsteeel/nomount) | KernelSU Next Manager → Modules → Install from storage |
+          | 2️⃣ **NoMount Suite** | \`$MOD_ASSET\` | the separate [NoMount project](https://github.com/maxsteeel/nomount) | KernelSU Next Manager → Modules → Install from storage |
 
-          > The kernel has NoMount **compiled in but dormant** — the **add-on module activates it**. You need both.
+          > The kernel has NoMount **compiled in but dormant** — the **NoMount Suite module activates it**. You need both.
 
-          ## 🔴 REQUIRED — Step 2: install the NoMount add-on
+          ## 🔴 REQUIRED — Step 2: install NoMount Suite
 
           After flashing the kernel and rebooting:
 
-          ### ➡️ [⬇️ Download the add-on: \`$MOD_ASSET\`](${{ github.server_url }}/${{ github.repository }}/releases/download/${NEW_TAG}/$MOD_ASSET)
+          ### ➡️ [⬇️ Download NoMount Suite: \`$MOD_ASSET\`](${{ github.server_url }}/${{ github.repository }}/releases/download/${NEW_TAG}/$MOD_ASSET)
 
           Then: KernelSU Next Manager → **Modules → Install from storage** → select \`$MOD_ASSET\` → **reboot**.
 
