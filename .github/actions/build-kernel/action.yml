@@ -1005,16 +1005,25 @@ runs:
         cp -f "$PH/pathhide.h" fs/pathhide.h
         dos2unix fs/pathhide.c fs/pathhide.h 2>/dev/null || true
         dos2unix "$PH"/*.patch 2>/dev/null || true
-        if [ ! -f "$PH/pathhide_${KV}_integration.patch" ]; then
-          echo "::error::no pathhide integration patch for KERNEL_VER=${KV}"; exit 1
-        fi
-        if patch -p1 --forward --dry-run < "$PH/pathhide_${KV}_integration.patch" >/dev/null 2>&1; then
-          patch -p1 --forward < "$PH/pathhide_${KV}_integration.patch"
-        elif patch -p1 --reverse --dry-run < "$PH/pathhide_${KV}_integration.patch" >/dev/null 2>&1; then
-          echo "already applied: pathhide_${KV}_integration.patch"
-        else
-          echo "::error::pathhide integration patch neither applied nor already present for ${KV}"; exit 1
-        fi
+        # Fail-closed apply, same contract as the _hook step: apply, tolerate an
+        # already-applied tree, but never continue on a patch that did neither.
+        apply_or_die() {
+          local p="$1"
+          if [ ! -f "$p" ]; then
+            echo "::error::missing pathhide patch: $(basename "$p")"; exit 1
+          fi
+          if patch -p1 --forward --dry-run < "$p" >/dev/null 2>&1; then
+            patch -p1 --forward < "$p"
+          elif patch -p1 --reverse --dry-run < "$p" >/dev/null 2>&1; then
+            echo "already applied: $(basename "$p")"
+          else
+            echo "::error::pathhide patch neither applied nor already present: $(basename "$p")"; exit 1
+          fi
+        }
+        apply_or_die "$PH/pathhide_${KV}_integration.patch"
+        # /proc/<pid>/map_files leaks the ranges of mappings hidden from maps, which is
+        # enough on its own to prove concealment. Fail-closed like the rest of the step.
+        apply_or_die "$PH/pathhide_mapfiles_${KV}_integration.patch"
         # wire pathhide.o into the fs build. Appended (not patched) because the Makefile
         # context differs across Qualcomm (Google PGO_PROFILE line) and MediaTek trees.
         grep -q 'obj-y += pathhide.o' fs/Makefile || echo 'obj-y += pathhide.o' >> fs/Makefile
