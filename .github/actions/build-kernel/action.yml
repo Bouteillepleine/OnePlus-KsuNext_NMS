@@ -904,8 +904,11 @@ runs:
         git clone --depth 1 -b hookless https://github.com/Bouteillepleine/kbuild.git "$NM_SRC"
         NM_PATCH="$NM_SRC/hookless/patches/nomount_${KERNEL_VER}_kernel_integration.patch"
         DEFCONFIG="$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
+        # Fail-closed: OP_NMS asked for a NoMount kernel, so a missing integration
+        # patch must not yield a green build with no NoMount and no CONFIG_NOMOUNT=y.
         if [ ! -f "$NM_PATCH" ]; then
-          echo "::warning::No hookless NoMount patch for KERNEL_VER=${KERNEL_VER} ($NM_PATCH); skipping"
+          echo "::error::No hookless NoMount patch for KERNEL_VER=${KERNEL_VER} ($NM_PATCH)"
+          exit 1
         else
           cd "$COMMON_KERNEL_FOLDER"
           cp -f "$NM_SRC/hookless/src/nomount.c" fs/nomount.c
