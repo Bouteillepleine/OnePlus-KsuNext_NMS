@@ -913,7 +913,19 @@ runs:
           cd "$COMMON_KERNEL_FOLDER"
           cp -f "$NM_SRC/hookless/src/nomount.c" fs/nomount.c
           cp -f "$NM_SRC/hookless/src/nomount.h" fs/nomount.h
-          if patch -p1 --forward --fuzz=3 < "$NM_PATCH"; then
+          # fuzz=1, not 3: only the task_mmu.c hunk needs slack (its header declares
+          # 6 context lines but carries 5), and 1 is enough on every GKI 5.10-6.12
+          # tree and on the OnePlus vendor trees. Wider fuzz can silently place a
+          # hunk in the wrong function.
+          if patch -p1 --forward --fuzz=1 < "$NM_PATCH"; then
+            # patch exits 0 even when fuzz relocated a hunk, so assert each edit
+            # actually landed instead of trusting the exit code.
+            grep -q 'config NOMOUNT' fs/Kconfig \
+              || { echo "::error::NoMount: fs/Kconfig edit missing"; exit 1; }
+            grep -qF 'obj-$(CONFIG_NOMOUNT) += nomount.o' fs/Makefile \
+              || { echo "::error::NoMount: fs/Makefile edit missing"; exit 1; }
+            grep -q 'nomount_spoof_mmap_metadata' fs/proc/task_mmu.c \
+              || { echo "::error::NoMount: task_mmu.c hook missing"; exit 1; }
             mkdir -p "$(dirname "$DEFCONFIG")"; touch "$DEFCONFIG"
             sed -i '/^CONFIG_NOMOUNT=/d' "$DEFCONFIG"
             echo "CONFIG_NOMOUNT=y" >> "$DEFCONFIG"
