@@ -10,9 +10,15 @@ permissions:
   actions: write
 
 concurrency:
-  # A new TEST dispatch cancels the previous test build (only the latest matters).
-  # RELEASE builds get their own group and are NEVER auto-cancelled mid-run.
-  group: ${{ github.workflow }}-${{ github.event.inputs.make_release == 'true' && 'release' || 'test' }}-${{ github.ref }}
+  # Re-dispatching the SAME configuration supersedes the running build, which is
+  # what you want after a fat-fingered input. Dispatches that differ do not: the
+  # key carries what is actually being built, not just the workflow's own branch.
+  # github.ref alone made a different-model build collide with an unrelated one
+  # and cancel it ~15 minutes in. Release builds keep their own group and are
+  # never auto-cancelled.
+  group: >-
+    ${{ github.workflow }}-${{ github.event.inputs.make_release == 'true' && 'release' || 'test' }}-${{ github.ref
+    }}-${{ github.event.inputs.op_target_model || github.event.inputs.op_model }}
   cancel-in-progress: ${{ github.event.inputs.make_release != 'true' }}
 
 on:
