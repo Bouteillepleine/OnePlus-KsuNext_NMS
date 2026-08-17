@@ -1792,6 +1792,14 @@ runs:
         done
 
         make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" O="$OUT" olddefconfig
+
+        # olddefconfig silently drops symbols the pulled KSU source does not define,
+        # so a typo or an upstream rename yields a green build missing the feature.
+        # Assert the ones we deliberately set actually survived into .config.
+        for sym in CONFIG_KSU; do
+          grep -q "^${sym}=y" "$OUT/.config" \
+            || { echo "::error::${sym} was dropped by olddefconfig (not defined by the KSU source?)"; exit 1; }
+        done
         
         KCFLAGS="$KCFLAGS -Wno-error -pipe ${KCFLAGS_EXTRA}"
         KCPPFLAGS="$KCPPFLAGS -DCONFIG_OPTIMIZE_INLINING"
