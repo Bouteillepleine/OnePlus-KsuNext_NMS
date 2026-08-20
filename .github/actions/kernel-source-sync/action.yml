@@ -86,24 +86,50 @@ runs:
         )
         
         # --- private-repo toolchain-cache access -----------------------------
-        # This repo is private, so github.com/<repo>/releases/download/<tag>/<f>
-        # 404s without auth. Resolve each asset via the REST API (which 302s to a
-        # short-lived signed URL needing no auth) and feed that to curl/aria2c.
+        # This repo is private and the cache release is a DRAFT (so it stays off
+        # the Releases page), so github.com/<repo>/releases/download/<tag>/<f>
+        # 404s AND /releases/tags/<tag> does not resolve drafts at all. List the
+        # releases (drafts are included for a push-access token), match on
+        # tag_name, then page that release's assets. Each asset is later fetched
+        # through the REST asset endpoint, which 302s to a short-lived signed URL
+        # needing no auth.
         GH_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+        _HDRS = {"Authorization": f"Bearer {GH_TOKEN}", "Accept": "application/vnd.github+json"}
         _CACHE_TAG = "toolchain-cache"
         _asset_ids = {}
         try:
-            _rel = requests.get(
-                f"https://api.github.com/repos/{TARGET_REPO}/releases/tags/{_CACHE_TAG}",
-                headers={"Authorization": f"Bearer {GH_TOKEN}", "Accept": "application/vnd.github+json"},
-                timeout=30,
-            )
-            if _rel.status_code == 200:
-                for _a in _rel.json().get("assets", []):
-                    _asset_ids[_a["name"]] = _a["id"]
-                print(f"  [CACHE] toolchain-cache: {len(_asset_ids)} asset(s) indexed")
+            _rel_id = None
+            for _page in range(1, 11):
+                _r = requests.get(
+                    f"https://api.github.com/repos/{TARGET_REPO}/releases",
+                    headers=_HDRS, params={"per_page": 100, "page": _page}, timeout=30,
+                )
+                if _r.status_code != 200:
+                    print(f"::warning::Could not list releases (HTTP {_r.status_code})")
+                    break
+                _batch = _r.json()
+                if not _batch:
+                    break
+                _rel_id = next((_x["id"] for _x in _batch if _x.get("tag_name") == _CACHE_TAG), None)
+                if _rel_id or len(_batch) < 100:
+                    break
+            if _rel_id is None:
+                print(f"::warning::No '{_CACHE_TAG}' release found in {TARGET_REPO}")
             else:
-                print(f"::warning::Could not read toolchain-cache release (HTTP {_rel.status_code})")
+                for _page in range(1, 21):
+                    _r = requests.get(
+                        f"https://api.github.com/repos/{TARGET_REPO}/releases/{_rel_id}/assets",
+                        headers=_HDRS, params={"per_page": 100, "page": _page}, timeout=30,
+                    )
+                    if _r.status_code != 200:
+                        print(f"::warning::Could not page toolchain-cache assets (HTTP {_r.status_code})")
+                        break
+                    _batch = _r.json()
+                    for _a in _batch:
+                        _asset_ids[_a["name"]] = _a["id"]
+                    if len(_batch) < 100:
+                        break
+                print(f"  [CACHE] toolchain-cache: {len(_asset_ids)} asset(s) indexed")
         except Exception as _e:
             print(f"::warning::Could not index toolchain-cache assets: {_e}")
 
@@ -151,7 +177,6 @@ runs:
                     found_in_cache = False
                     if label:
                         base_filename = f"{label}-{rev}.tar.gz"
-                        BASE_URL = f"https://github.com/{TARGET_REPO}/releases/download/toolchain-cache"
                         
                         single_url = cache_url(base_filename)
                         if single_url:

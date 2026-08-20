@@ -11,12 +11,8 @@ jobs:
   prepare-release:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Ensure Single Release
+      # No checkout: the cache release is a draft, so there is no git tag to create.
+      - name: Ensure Single Draft Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
@@ -26,31 +22,25 @@ jobs:
           TARGET_REPO="${{ github.repository }}"
           TAG_NAME="toolchain-cache"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git fetch --tags --force
-
-          if ! git rev-parse -q --verify "refs/tags/$TAG_NAME" >/dev/null; then
-            echo "Tag not found. Creating backdated tag..."
-
-            GIT_COMMITTER_DATE="2015-01-01T12:00:00Z" \
-            GIT_AUTHOR_DATE="2015-01-01T12:00:00Z" \
-            git tag -a "$TAG_NAME" -m "Internal Toolchains Cache"
-
-            git push origin "$TAG_NAME"
+          # Kept as a DRAFT so the toolchain cache never shows up on the Releases
+          # page and never creates a git tag. Drafts (and their assets) are only
+          # reachable through the authenticated API, which is exactly how
+          # kernel-source-sync and the cache actions already fetch them.
+          if gh release view "$TAG_NAME" --repo "$TARGET_REPO" >/dev/null 2>&1; then
+            if [ "$(gh release view "$TAG_NAME" --repo "$TARGET_REPO" --json isDraft -q .isDraft)" = "true" ]; then
+              echo "Draft release '$TAG_NAME' already exists."
+            else
+              echo "Release '$TAG_NAME' is published - converting it to a draft..."
+              gh release edit "$TAG_NAME" --draft=true --repo "$TARGET_REPO"
+              echo "::notice::'$TAG_NAME' is now a draft and off the Releases page. Its old git tag still exists; drop it with: git push origin :refs/tags/$TAG_NAME"
+            fi
           else
-            echo "Tag '$TAG_NAME' already exists."
-          fi
-
-          if ! gh release view "$TAG_NAME" --repo "$TARGET_REPO" >/dev/null 2>&1; then
-            echo "Release not found. Creating..."
+            echo "Release not found. Creating draft..."
             gh release create "$TAG_NAME" \
+              --draft \
               --title "Toolchains Mirror Cache" \
               --notes "Deduplicated Toolchains for Kernel Build" \
               --repo "$TARGET_REPO"
-          else
-            echo "Release '$TAG_NAME' already exists."
           fi
 
   generate-mirror-matrix:
@@ -369,12 +359,12 @@ jobs:
           FILENAME="${{ matrix.cache_file }}"
           DOWNLOAD_URL="${{ matrix.url }}"
           RELEASE_TAG="toolchain-cache"
-          BASE_URL="https://github.com/${TARGET_REPO}/releases/download/${RELEASE_TAG}"
 
           echo "🔍 Checking if $FILENAME exists in mirror..."
 
-          # Private repo: github.com/<repo>/releases/download/<tag> 404s without auth,
-          # so query the release asset list via the authenticated gh CLI instead.
+          # Private repo + draft release: github.com/<repo>/releases/download/<tag>
+          # 404s and the tag is not resolvable anonymously, so query the asset list
+          # via the authenticated gh CLI (which finds drafts by tag_name) instead.
           CACHED_ASSETS="$(gh release view "$RELEASE_TAG" --repo "$TARGET_REPO" --json assets -q '.assets[].name' 2>/dev/null || true)"
 
           if grep -qxF "$FILENAME" <<<"$CACHED_ASSETS" || grep -qxF "${FILENAME}.partaa" <<<"$CACHED_ASSETS"; then
