@@ -925,7 +925,7 @@ runs:
               || { echo "::error::NoMount: fs/Kconfig edit missing"; exit 1; }
             grep -qF 'obj-$(CONFIG_NOMOUNT) += nomount.o' fs/Makefile \
               || { echo "::error::NoMount: fs/Makefile edit missing"; exit 1; }
-            grep -q 'nomount_spoof_mmap_metadata' fs/proc/task_mmu.c \
+            grep -qE 'vfs_map_meta_override|nomount_spoof_mmap_metadata' fs/proc/task_mmu.c \
               || { echo "::error::NoMount: task_mmu.c hook missing"; exit 1; }
             mkdir -p "$(dirname "$DEFCONFIG")"; touch "$DEFCONFIG"
             sed -i '/^CONFIG_NOMOUNT=/d' "$DEFCONFIG"
