@@ -426,6 +426,7 @@ jobs:
       !cancelled() &&
       needs.set-op-model.result == 'success' &&
       (needs.mirror_toolchain.result == 'success' || needs.mirror_toolchain.result == 'skipped')
+    timeout-minutes: 90
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -452,8 +453,21 @@ jobs:
         run: |
           set -euo pipefail
           echo "::group::Install dependencies"
-          sudo apt-get -o Acquire::Retries=3 update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+          APT_OPTS="-o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o DPkg::Lock::Timeout=120"
+          apt_try() {
+            n=0
+            until timeout 300 sudo DEBIAN_FRONTEND=noninteractive apt-get $APT_OPTS "$@"; do
+              n=$((n+1))
+              if [ "$n" -ge 3 ]; then
+                echo "::error::apt-get $1 failed after $n attempts"
+                return 1
+              fi
+              echo "apt-get $1 failed or stalled, retry $n/3"
+              sleep 15
+            done
+          }
+          apt_try update -qq
+          apt_try install -y --no-install-recommends \
             git curl ca-certificates build-essential clang lld flex bison \
             libelf-dev libssl-dev libncurses-dev zlib1g-dev liblz4-tool \
             libxml2-utils rsync unzip dwarves file python3 ccache jq bc dos2unix kmod libdw-dev elfutils pigz
