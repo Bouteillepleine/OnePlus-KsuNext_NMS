@@ -52,9 +52,6 @@ runs:
           cd "${{ inputs.working_dir }}"
         fi
 
-        git config user.name  "github-actions[bot]"
-        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
         TAG_NAME="${{ inputs.cache_bucket }}"
         BASE_FILENAME="cache-${{ inputs.cache_key }}"
         CLEVEL="${{ inputs.compression_level }}"
@@ -70,20 +67,25 @@ runs:
         # ──────────────────────────────────────────────
         echo "::group:: Checking Release State"
 
-        git fetch --tags --force || true
-
-        # 0 = release exists, 1 = release missing (404), 2 = API error (5xx/network)
+        # 0 = release exists, 1 = release missing, 2 = API error (5xx/network)
+        #
+        # The cache release is a DRAFT so it stays off the Releases page, and a
+        # draft is NOT addressable via /releases/tags/<tag> — that endpoint 404s
+        # for it, which would make every save create yet another duplicate draft
+        # (no tag exists, so there is no 422 "tag_name already exists" to dedupe
+        # on). List the releases instead — drafts are included for a push-access
+        # token — and match on tag_name.
         check_release() {
-          local tag="$1" code
-          code="$(curl -s -o /dev/null -w '%{http_code}' \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${TARGET_REPO}/releases/tags/${tag}" || echo 000)"
-          case "$code" in
-            200) return 0 ;;
-            404) return 1 ;;
-            *)   echo "GitHub API returned HTTP $code checking release '$tag'"; return 2 ;;
-          esac
+          local tag="$1" ids
+          if ! ids="$(gh api --paginate "repos/${TARGET_REPO}/releases" \
+                        --jq ".[] | select(.tag_name == \"$tag\") | .id" 2>/dev/null)"; then
+            echo "GitHub API error while listing releases for '$tag'"
+            return 2
+          fi
+          if [ -n "$(printf '%s\n' "$ids" | sed -n '/./{p;q}')" ]; then
+            return 0
+          fi
+          return 1
         }
 
         ensure_release_exists() {
@@ -93,6 +95,12 @@ runs:
             check_release "$tag"; rc=$?
 
             if [ "$rc" -eq 0 ]; then
+              # Self-heal a bucket published before this action started
+              # creating drafts, so it drops off the Releases page.
+              if [ "$(gh release view "$tag" --repo "$TARGET_REPO" --json isDraft -q .isDraft 2>/dev/null)" = "false" ]; then
+                echo "Release '$tag' is published - converting it to a draft..."
+                gh release edit "$tag" --draft=true --repo "$TARGET_REPO" >/dev/null || true
+              fi
               echo "Release '$tag' already exists. Ready for upload."
               return 0
             fi
@@ -105,6 +113,7 @@ runs:
               # every build log with 'remote rejected'/'failed to push'. gh release create makes
               # the tag via the REST API (not subject to the git-push workflow check).
               if gh release create "$tag" \
+                  --draft \
                   --title "$tag" \
                   --notes "Automated cache storage" \
                   --target "$GITHUB_SHA" \

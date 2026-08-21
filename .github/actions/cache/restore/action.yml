@@ -18,6 +18,10 @@ inputs:
     description: 'The tag name for the release (e.g., general-cache)'
     required: true
     default: 'general-cache'
+  github_token:
+    description: 'GitHub Token (falls back to the workflow token)'
+    required: false
+    default: ''
   debug:
     description: 'Enable Logs'
     required: false
@@ -31,17 +35,16 @@ runs:
       shell: bash
       env:
         TARGET_REPO: "${{ github.repository }}"
+        GH_TOKEN: ${{ inputs.github_token != '' && inputs.github_token || github.token }}
       run: |
         if [ "${{ inputs.debug }}" = "true" ]; then set -x; fi
 
         cd "$GITHUB_WORKSPACE"
 
         TAG_NAME="${{ inputs.cache_bucket }}"
-        BASE_URL="https://github.com/${TARGET_REPO}/releases/download/$TAG_NAME"
-        ASSETS_URL="https://github.com/${TARGET_REPO}/releases/expanded_assets/$TAG_NAME"
 
         ARIA2_OPTS=(
-          "-x16" "-s16" "-k1M" "-j5" "--file-allocation=none"
+          "-x16" "-s16" "-k1M" "-j5" "--file-allocation=none" "--allow-overwrite=true"
           "--header=User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
           "--header=Accept: */*"
           "--header=Connection: keep-alive"
@@ -56,15 +59,32 @@ runs:
         # ──────────────────────────────────────────────
         echo "::group:: Fetching Asset List"
 
-        HTTP_RESPONSE=$(curl -sL -A "Mozilla/5.0" -w "%{http_code}" "$ASSETS_URL" -o assets.html || echo "404")
+        # This repo is private and the cache release is a DRAFT, so the public
+        # expanded_assets page and releases/download/<tag>/<file> both 404 — the
+        # old scrape silently returned nothing on every single build. Go through
+        # the authenticated REST API: list the releases (drafts included for a
+        # push-access token), match on tag_name, then page that release's assets.
+        REL_LIST="$(gh api --paginate "repos/$TARGET_REPO/releases" \
+                      --jq ".[] | select(.tag_name == \"$TAG_NAME\") | .id" 2>/dev/null || true)"
+        REL_ID="$(printf '%s\n' "$REL_LIST" | sed -n '/./{p;q}')"
 
-        if [ "$HTTP_RESPONSE" -eq 200 ]; then
-          ALL_ASSETS=$(grep -oP "download/$TAG_NAME/\K[^\"' ]+" assets.html | sort -u || echo "")
-        else
-          echo "Status $HTTP_RESPONSE: Failed to fetch assets from scraper endpoint."
-          ALL_ASSETS=""
+        if [ -z "$REL_ID" ]; then
+          echo "No release found for bucket '$TAG_NAME'. Skipping search."
+          echo "::endgroup::"
+          exit 0
         fi
-        rm -f assets.html
+
+        ASSET_TSV="$(gh api --paginate "repos/$TARGET_REPO/releases/$REL_ID/assets" \
+                       --jq '.[] | "\(.name)\t\(.id)"' 2>/dev/null || true)"
+
+        declare -A ASSET_ID=()
+        while IFS=$'\t' read -r _a_name _a_id; do
+          if [ -n "${_a_name:-}" ]; then
+            ASSET_ID["$_a_name"]="$_a_id"
+          fi
+        done <<< "$ASSET_TSV"
+
+        ALL_ASSETS="$(printf '%s\n' "${!ASSET_ID[@]}" | sed '/^$/d' | sort -u)"
 
         if [ -z "$ALL_ASSETS" ]; then
           echo "No assets found in bucket '$TAG_NAME'. Skipping search."
@@ -111,14 +131,35 @@ runs:
           # ──────────────────────────────────────────────
           echo "::group:: Downloading Cache"
 
+          asset_url() {
+            # Release assets are served from a short-lived signed URL that the API
+            # 302s to, so this is re-resolved on every attempt rather than cached.
+            # The `|| true` matters: composite `shell: bash` runs with -e, and a
+            # failing command substitution would otherwise kill the whole step.
+            local id="$1"
+            curl -sS -o /dev/null -w '%{redirect_url}' \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/octet-stream" \
+              "https://api.github.com/repos/$TARGET_REPO/releases/assets/$id" || true
+          }
+
           download_asset() {
             local filename="$1"
-            local url="$2"
+            local asset_id="$2"
             local max_retries=3
             local attempt=1
+            local url
 
             while [ "$attempt" -le "$max_retries" ]; do
               echo "  Attempt $attempt: Downloading $filename..."
+
+              url="$(asset_url "$asset_id")"
+              if [ -z "$url" ]; then
+                echo "  ⚠️ Could not resolve a download URL for asset $asset_id. Retrying in 5s..."
+                sleep 5
+                attempt=$((attempt + 1))
+                continue
+              fi
 
               if timeout 10m aria2c "${ARIA2_OPTS[@]}" \
                   --retry-wait=10 --max-tries=10 \
@@ -147,7 +188,7 @@ runs:
             for part in {a..z}{a..z}; do
               PART_NAME="$BASE_FILENAME$EXT.part${part}"
               if echo "$ALL_ASSETS" | grep -q "^${PART_NAME}$"; then
-                if ! download_asset "$PART_NAME" "$BASE_URL/$PART_NAME"; then
+                if ! download_asset "$PART_NAME" "${ASSET_ID[$PART_NAME]}"; then
                   echo "::error::Failed to download $PART_NAME after multiple retries."
                   exit 1
                 fi
@@ -156,7 +197,7 @@ runs:
               fi
             done
           else
-            if ! download_asset "$BASE_FILENAME$EXT" "$BASE_URL/$BASE_FILENAME$EXT"; then
+            if ! download_asset "$BASE_FILENAME$EXT" "${ASSET_ID[$BASE_FILENAME$EXT]}"; then
               echo "::error::Failed to download $BASE_FILENAME$EXT after multiple retries."
               exit 1
             fi
