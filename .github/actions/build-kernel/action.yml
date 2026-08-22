@@ -846,11 +846,37 @@ runs:
         echo "::group::Add KernelSU Next"
         cd "$KERNEL_PLATFORM_FOLDER"
         echo "Adding KernelSU Next..."
+
+        KSUN_SETUP_SCRIPT="$(mktemp /tmp/ksun_setup_XXXXXX.sh)"
+        trap 'rm -f "$KSUN_SETUP_SCRIPT"' EXIT
+
+        echo "Downloading KernelSU Next setup script..."
+        if ! curl --fail --location --proto '=https' --tlsv1.2 -LSs \
+          --retry 5 --retry-delay 5 --retry-all-errors \
+          "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" \
+          -o "$KSUN_SETUP_SCRIPT"; then
+          echo "::error::Failed to download KernelSU Next setup.sh after retries"
+          exit 1
+        fi
+
+        SCRIPT_SIZE="$(stat -c%s "$KSUN_SETUP_SCRIPT")"
+        if [ "$SCRIPT_SIZE" -lt 512 ]; then
+          echo "::error::Downloaded setup.sh is suspiciously small (${SCRIPT_SIZE} bytes). Aborting."
+          exit 1
+        fi
+
+        if ! head -n1 "$KSUN_SETUP_SCRIPT" | grep -q '^#!'; then
+          echo "::error::Downloaded setup.sh does not start with a shebang. Aborting."
+          exit 1
+        fi
+
+        chmod +x "$KSUN_SETUP_SCRIPT"
+
         KSU_INPUT="${{ inputs.ksu_branch_or_hash }}"
         if [ -z "$KSU_INPUT" ]; then
-          curl --fail --location --proto '=https' -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
+          bash "$KSUN_SETUP_SCRIPT"
         else
-          curl --fail --location --proto '=https' -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s "$KSU_INPUT"
+          bash "$KSUN_SETUP_SCRIPT" "$KSU_INPUT"
         fi
         git submodule update --init --recursive
         cd KernelSU-Next/kernel
