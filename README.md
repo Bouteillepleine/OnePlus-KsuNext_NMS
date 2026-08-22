@@ -11,7 +11,7 @@
 [![Build](https://img.shields.io/github/actions/workflow/status/Bouteillepleine/OnePlus-KsuNext_NMS/build-kernel-release.yml?style=for-the-badge&logo=githubactions&logoColor=white&label=Build)](https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/actions)
 [![Stars](https://img.shields.io/github/stars/Bouteillepleine/OnePlus-KsuNext_NMS?style=for-the-badge&logo=github&color=E3B341)](https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/stargazers)
 
-**Forked from [WildKernels/OnePlus_KernelSU_SUSFS](https://github.com/WildKernels/OnePlus_KernelSU_SUSFS)**
+**Based on [WildKernels/OnePlus_KernelSU_SUSFS](https://github.com/WildKernels/OnePlus_KernelSU_SUSFS)**
 
 </div>
 
