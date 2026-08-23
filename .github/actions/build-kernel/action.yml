@@ -698,6 +698,15 @@ runs:
         set -euo pipefail
         
         echo "/usr/lib/ccache" >> $GITHUB_PATH
+
+        # OFF for the build. It was only ever set (to true) in the
+        # normalize-before-save step, which runs AFTER compilation -- so the build
+        # itself inherited ccache's default, which is on. The inode cache maps
+        # (dev, inode, size, mtime) -> content hash to skip re-hashing; the patched
+        # sources this builder drops in are the one place that mapping can go
+        # stale, and a wrong object here ships a kernel whose behaviour does not
+        # match its source. Re-hashing a few source files is not worth that risk.
+        echo "CCACHE_INODECACHE=false" >> $GITHUB_ENV
         
         echo "Current ccache configuration:"
         ccache -p
@@ -938,8 +947,12 @@ runs:
           exit 1
         else
           cd "$COMMON_KERNEL_FOLDER"
-          cp -f "$NM_SRC/hookless/src/nomount.c" fs/nomount.c
-          cp -f "$NM_SRC/hookless/src/nomount.h" fs/nomount.h
+          # rm first: `cp -f` overwrites IN PLACE, keeping the inode, which is
+          # what ccache's inode cache keys on. A fresh inode cannot alias a
+          # stale (inode -> content hash) entry from a restored cache.
+          rm -f fs/nomount.c fs/nomount.h
+          cp "$NM_SRC/hookless/src/nomount.c" fs/nomount.c
+          cp "$NM_SRC/hookless/src/nomount.h" fs/nomount.h
           # fuzz=1, not 3: only the task_mmu.c hunk needs slack (its header declares
           # 6 context lines but carries 5), and 1 is enough on every GKI 5.10-6.12
           # tree and on the OnePlus vendor trees. Wider fuzz can silently place a
@@ -1072,8 +1085,10 @@ runs:
         PH="$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_pathhide"
         KV="${KERNEL_VER}"
         cd "$COMMON_KERNEL_FOLDER"
-        cp -f "$PH/pathhide.c" fs/pathhide.c
-        cp -f "$PH/pathhide.h" fs/pathhide.h
+        # Fresh inode, same reasoning as the nomount copy above.
+        rm -f fs/pathhide.c fs/pathhide.h
+        cp "$PH/pathhide.c" fs/pathhide.c
+        cp "$PH/pathhide.h" fs/pathhide.h
         dos2unix fs/pathhide.c fs/pathhide.h 2>/dev/null || true
         dos2unix "$PH"/*.patch 2>/dev/null || true
         # Fail-closed apply, same contract as the _hook step: apply, tolerate an
@@ -2309,7 +2324,7 @@ runs:
           echo "CCACHE_COMPRESSLEVEL=3"
           echo "CCACHE_DIRECT=true"
           echo "CCACHE_FILECLONE=true"
-          echo "CCACHE_INODECACHE=true"
+          echo "CCACHE_INODECACHE=false"
           echo "CCACHE_NOREADONLY_DIRECT=true"
           echo "CCACHE_NOHASHDIR=true"
           echo "CCACHE_IGNOREOPTIONS=--sysroot*"
