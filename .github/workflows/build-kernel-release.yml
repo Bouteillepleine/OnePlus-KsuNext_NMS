@@ -519,7 +519,7 @@ jobs:
               "CCACHE_COMPRESSION_LEVEL=3"
               "CCACHE_DIRECT=true"
               "CCACHE_FILE_CLONE=true"
-              "CCACHE_INODE_CACHE=false"
+              "CCACHE_NOINODECACHE=true"
               "CCACHE_IS_KERNEL_COMPILING=true"
               "CCACHE_UMASK=002"
               "CCACHE_SLOPPINESS=file_macro,time_macros,pch_defines,system_headers,locale"

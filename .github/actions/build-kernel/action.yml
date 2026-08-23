@@ -678,7 +678,7 @@ runs:
         
         echo "/usr/lib/ccache" >> $GITHUB_PATH
 
-        echo "CCACHE_INODECACHE=false" >> $GITHUB_ENV
+        echo "CCACHE_NOINODECACHE=true" >> $GITHUB_ENV
         
         echo "Current ccache configuration:"
         ccache -p
@@ -2226,7 +2226,7 @@ runs:
           echo "CCACHE_COMPRESSLEVEL=3"
           echo "CCACHE_DIRECT=true"
           echo "CCACHE_FILECLONE=true"
-          echo "CCACHE_INODECACHE=false"
+          echo "CCACHE_NOINODECACHE=true"
           echo "CCACHE_NOREADONLY_DIRECT=true"
           echo "CCACHE_NOHASHDIR=true"
           echo "CCACHE_IGNOREOPTIONS=--sysroot*"
