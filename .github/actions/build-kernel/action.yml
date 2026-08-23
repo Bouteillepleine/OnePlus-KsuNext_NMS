@@ -1018,17 +1018,46 @@ runs:
             echo "::error::oracle patch neither applied nor already present: $(basename "$p")"; exit 1
           fi
         }
+        # Apply the first candidate that fits (or is already applied), and fail if
+        # none do. Same fail-closed contract as apply_or_die, for the patches that
+        # ship in per-kernel variants.
+        apply_first_of() {
+          local p
+          for p in "$@"; do
+            if patch -p1 --forward --dry-run < "$p" >/dev/null 2>&1; then
+              patch -p1 --forward < "$p"; echo "selected: $(basename "$p")"; return 0
+            elif patch -p1 --reverse --dry-run < "$p" >/dev/null 2>&1; then
+              echo "already applied: $(basename "$p")"; return 0
+            fi
+          done
+          echo "::error::no variant applied for: $*"; exit 1
+        }
         cd "$COMMON_KERNEL_FOLDER"
         apply_or_die "$HOOK/hide_selinux_selinuxfs.patch"
-        if [ "$KV" = "6.12" ]; then
-          apply_or_die "$HOOK/hide_selinux_attr_6_12.patch"
-        else
-          apply_or_die "$HOOK/hide_selinux_attr.patch"
-        fi
-        case "$KV" in
-          6.6|6.12) apply_or_die "$HOOK/quiet_selinux_audit.patch" ;;
-          *)        apply_or_die "$HOOK/quiet_selinux_audit_legacy.patch" ;;
-        esac
+        # Pick the variant that FITS the tree rather than keying on a version
+        # string. The old tests were `[ "$KV" = "6.12" ]` and `case 6.6|6.12`, so
+        # any NEWER kernel silently selected the pre-6.12 variant -- failing
+        # closed through apply_or_die, but as a broken build on a new version
+        # rather than as a decision anyone reviewed.
+        #
+        # ORDER IS LOAD-BEARING for the attr pair: most specific FIRST. Measured
+        # against the real OnePlus trees (2026-08-23), these are NOT mutually
+        # exclusive:
+        #
+        #             5.10  5.15  6.1   6.6   6.12
+        #   attr_6_12   no    no   no    no  APPLIES
+        #   attr       yes   yes  yes   yes  APPLIES   <-- both fit on 6.12
+        #   audit       no    no   no  yes   yes
+        #   audit_legacy yes  yes  yes   no    no      (this pair IS exclusive)
+        #
+        # On 6.12 the old attr patch still applies because selinux_lsm_setattr()
+        # -- the function it targets -- survives alongside the new
+        # selinux_setprocattr() that calls lsm_name_to_attr(). Landing in the
+        # inner one would still gate the write, but it is not the hook that was
+        # reviewed, so the 6.12 variant has to be offered first and win.
+        # Same selection the kernel_patches verifier makes.
+        apply_first_of "$HOOK/hide_selinux_attr_6_12.patch" "$HOOK/hide_selinux_attr.patch"
+        apply_first_of "$HOOK/quiet_selinux_audit.patch" "$HOOK/quiet_selinux_audit_legacy.patch"
         apply_or_die "$HOOK/quiet_selinux_audit_user.patch"
         cd "$KSU_FOLDER"
         apply_or_die "$HOOK/fix_selinux_seqno.patch"
