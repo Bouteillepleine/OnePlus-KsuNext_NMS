@@ -10,12 +10,6 @@ permissions:
   actions: write
 
 concurrency:
-  # Re-dispatching the SAME configuration supersedes the running build, which is
-  # what you want after a fat-fingered input. Dispatches that differ do not: the
-  # key carries what is actually being built, not just the workflow's own branch.
-  # github.ref alone made a different-model build collide with an unrelated one
-  # and cancel it ~15 minutes in. Release builds keep their own group and are
-  # never auto-cancelled.
   group: >-
     ${{ github.workflow }}-${{ github.event.inputs.make_release == 'true' && 'release' || 'test' }}-${{ github.ref
     }}-${{ github.event.inputs.op_target_model || github.event.inputs.op_model }}
@@ -135,10 +129,8 @@ jobs:
               jq_filter="map(select(.os_version == \"A16\"))"
               ;;
             android*-*.*)
-              # Extract android version and kernel version
               IFS='-' read -r av kv <<< "$input"
               
-              # Build android*-* only for A16
               jq_filter="map(select(.os_version == \"A16\")) | map(select(.android_version == \"$av\" and .kernel_version == \"$kv\"))"
               
               echo "ℹ️  Android-Kernel filter applied: $av-$kv"
@@ -182,7 +174,6 @@ jobs:
           echo "$filtered" | jq '.' > matrix.json
           echo "$ksu_options_normalized" > ksu_temp.json
           
-          # For each device + each ksu option → one combined entry
           merged_matrix=$(jq -n \
             --slurpfile devices matrix.json \
             --slurpfile ksu_list ksu_temp.json \
@@ -250,13 +241,8 @@ jobs:
           echo "  ✅ Resolved: $ksu_type/$ksu_ref → $resolved_sha"
           echo "ksu_resolved_hash=$resolved_sha" >> "$GITHUB_OUTPUT"
           
-          # Inject ksu_resolved_hash into each device in the matrix
           merged_matrix=$(echo "$merged_matrix" | jq  --arg resolved_sha "$resolved_sha" 'map(.ksu_resolved_hash = $resolved_sha)')
           
-          # NoMount version fetch. nomount.h in Bouteillepleine/kbuild@hookless carries
-          # NM_MODULE_VERSION, which takes over the role SUSFS_VERSION used to play here:
-          # it is the base of the release tag. Resolved once for the whole run so every
-          # device reports the same version, exactly as the susfs version did.
           mapfile -t active_keys < <(
             echo "$merged_matrix" \
               | jq -r '.[] | select(.NMS == true) | "\(.android_version)-\(.kernel_version)"' \
@@ -265,7 +251,6 @@ jobs:
 
           echo "🔍 NoMount (hookless) enabled for: ${active_keys[*]:-none}"
 
-          # Write CSV list of active GKI versions
           active_gki_keys_csv=$(IFS=','; echo "${active_keys[*]:-}")
           echo "active_gki_keys=$active_gki_keys_csv" >> "$GITHUB_OUTPUT"
 
@@ -289,7 +274,6 @@ jobs:
 
           echo "  ✅ NoMount version: $nomount_version"
 
-          # make_release=true: an unknown version would produce a garbage tag — hard error
           if [ "${{ inputs.make_release }}" = "true" ] && [ "$nomount_version" = "unknown" ]; then
             echo "::error::Could not read NM_MODULE_VERSION from kbuild@hookless. Cannot proceed with release."
             exit 1
@@ -306,7 +290,6 @@ jobs:
           
           echo "$merged_matrix" > final_matrix_temp.json
           
-          # Recalculate wrapped with updated matrix and write output
           wrapped=$(jq --slurp '{ include: .[] }' final_matrix_temp.json)
           echo "matrix=$(echo "$wrapped" | jq -c .)" >> "$GITHUB_OUTPUT"
           rm final_matrix_temp.json
@@ -364,7 +347,6 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "> **💡 Note:** Hashes are resolved at run time via API calls before builds start." >> $GITHUB_STEP_SUMMARY
           
-          # Add A restriction note for android-kernel filters
           if [[ "${{ inputs.op_model }}" == android*-*.* ]]; then
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "> **⚠️ Android-Kernel Filter:** Only A16 devices will be built for \`${{ inputs.op_model }}\`" >> $GITHUB_STEP_SUMMARY
@@ -372,12 +354,6 @@ jobs:
 
   mirror_toolchain:
     needs: set-op-model
-    # Run when explicitly requested OR for any release build. The mirror workflow is
-    # idempotent (it HEAD-checks each toolchain in the toolchain-cache release and
-    # skips ones already present, before any download), so on a warm cache this is
-    # just a few quick checks; on a cold cache it auto-populates instead of letting
-    # the build hard-fail with "Toolchain NOT FOUND in cache". Test/iterative builds
-    # (make_release=false) still skip it entirely for fast turnaround.
     if: ${{ inputs.mirror_toolchains || inputs.make_release }}
     uses: ./.github/workflows/mirror-toolchains.yml
     secrets: inherit
@@ -386,11 +362,6 @@ jobs:
     name: Prepare ccache binary (download once)
     runs-on: ubuntu-latest
     steps:
-      # Download the custom ccache binary ONCE for the whole matrix and share it as
-      # an artifact. Previously every parallel matrix job curl'd the same GitHub raw
-      # URL simultaneously, which made GitHub's edge rate-limit / 504 the CI IPs and
-      # fail the whole build (the URL is fine in a browser -- it's the ~30x parallel
-      # hammering that triggers the throttle).
       - name: Download custom ccache once
         run: |
           set -uo pipefail
@@ -435,9 +406,6 @@ jobs:
       ksun_ver: ${{ steps.build-stat.outputs.ksu_version }}
       ksu_ver: ${{ steps.build-stat.outputs.ksu_version }}
     env:
-      # Total devices in this run — lets the kernel-source-sync step allow a direct
-      # upstream toolchain download on cache-miss for small builds, while the full
-      # matrix still requires the toolchain-cache mirror (avoids 143x upstream hammer).
       OP_TOTAL_DEVICES: ${{ needs.set-op-model.outputs.device_count }}
     steps:
       - name: 📥 Checkout Code
@@ -491,8 +459,6 @@ jobs:
             sudo chmod +x /usr/bin/ccache
             echo "✅ installed custom ccache from shared artifact"
           else
-            # prepare_ccache could not fetch it (504/throttle); keep the apt ccache
-            # already installed in 'Install Minimal Dependencies'.
             echo "::warning::shared ccache artifact unavailable; using apt ccache"
           fi
           rm -rf ccache-dl
@@ -653,14 +619,12 @@ jobs:
         run: |
           echo "::group::Cleanup"
           
-          # Remove build artifacts but PRESERVE ccache
           sudo rm -rf "$GITHUB_WORKSPACE/out" || true
           sudo rm -rf "$GITHUB_WORKSPACE/build" || true
           sudo rm -rf "$GITHUB_WORKSPACE/kernel/out" || true
           sudo rm -rf "$GITHUB_WORKSPACE/.repo" || true
           sudo rm -rf /tmp/* || true
           
-          # Show ccache stats (don't clear it!)
           if command -v ccache >/dev/null 2>&1; then
             echo ""
             echo "📊 ccache statistics after build:"
@@ -686,7 +650,6 @@ jobs:
       - name: Summarize build results
         run: |
           set -uo pipefail
-          # Pull every "build (...)" matrix job's final conclusion for this run.
           jobs="$(gh api --paginate \
             "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100" \
             --jq '.jobs[] | select(.name|startswith("build (")) | "\(.conclusion)\t\(.name)"')"
@@ -734,8 +697,6 @@ jobs:
 
       - name: 🏷️ Generate and Create New Tag
         run: |
-          # Tags are nm<version>-r<n>, e.g. nm12-r1 — the NoMount analogue of the old
-          # susfs v2.2.0-r<n> scheme, and distinct from it so old tags never collide.
           TAG_BASE="nm${NOMOUNT_VERSION}"
 
           LATEST_MATCHING_TAG=$(gh api repos/$REPO_OWNER/$REPO_NAME/tags \
@@ -744,19 +705,13 @@ jobs:
                   | last | .name // empty")
           
           if [ -z "$LATEST_MATCHING_TAG" ]; then
-            # No existing release for this NoMount version → first release
             NEW_TAG="${TAG_BASE}-r1"
           else
-            # Only increment the -r* suffix of the latest release for this version
             NEW_TAG=$(echo "$LATEST_MATCHING_TAG" | awk -F'-r' '{printf "%s-r%d", $1, $2+1}')
           fi
           
           echo "New tag: $NEW_TAG"
           echo "NEW_TAG=${NEW_TAG}" >> $GITHUB_ENV
-          # Do NOT `git push` the tag: the Actions GITHUB_TOKEN is refused when a pushed ref's
-          # tree contains .github/workflows/* ("without workflows permission"). The tag is
-          # created instead by `gh release create --target` below (REST API — not subject to
-          # the git-push workflow check), so no PAT is needed.
 
       - name: 📥 Download Artifacts
         uses: actions/download-artifact@v8
@@ -873,10 +828,8 @@ jobs:
         run: |
           echo "=== Start building the release notes ==="
           
-          # Remove ccache-binary artifacts
           rm -f ./downloaded-artifacts/ccache-binary.zip
           
-          # Collect build metadata
           declare -A device_info
           
           JSON_BUILD_DATA=$(jq -c '.' ./downloaded-artifacts/matrix.json)
@@ -910,7 +863,6 @@ jobs:
           
           
           
-          # NoMount Suite module (Step-2 callout): version from suite module.prop, asset sorts to top of Assets
           MOD_VER=$(curl -fsSL https://raw.githubusercontent.com/Bouteillepleine/nomount/suite/module/module.prop 2>/dev/null | awk -F= '/^version=/{print $2}')
           MOD_VER="${MOD_VER:-v1.0.5}"
           MOD_ASSET="00_NoMount-Module-${MOD_VER}.zip"
@@ -962,10 +914,6 @@ jobs:
             
             IFS='|' read -r model os_ver kernel_ver _ _ _ zipfile <<< "${device_info["$full_key"]}"
             
-            # Use jq to extract feature flags for this model from the JSON matrix.
-            # Reconstruct the original model name (e.g. OP13r-6.1.118) in case the ZIP
-            # had the kernel version suffix stripped for display. Try exact ORIG_MODEL
-            # first, fall back to base MODEL, both filtered by os_version.
             full_kv=$(echo "$kernel_ver" | sed 's/^[^-]*-//')
             possible_orig_model="${model}-${full_kv}"
             feature_flags=$(jq -r --arg MODEL "$model" --arg ORIG_MODEL "$possible_orig_model" --arg OS "$os_ver" '
@@ -975,14 +923,12 @@ jobs:
             ' <<< "$JSON_BUILD_DATA")
             
             features=()
-             # If no match found, skip or handle error
             if [[ -z "$feature_flags" ]]; then
               echo "Warning: No JSON entry found for model: $model" >&2
               features_str="N/A"
             else
               IFS=$'\t' read -r hmbird nms bbr bbr3 bbg ttl ip_set unicode ds ntsync <<< "$feature_flags"
               
-              # Build features string based on boolean values
               [[ "$hmbird" == "true" ]] && features+=("🐦 HMBIRD")
               [[ "$nms" == "true" ]] && features+=("🫥 NoMount")
               { [[ "$bbr" == "true" ]] || [[ "$bbr3" == "true" ]]; } && features+=("🚀 BBR")
@@ -1047,7 +993,6 @@ jobs:
           | Component | Version/Setting |
           |-----------|----------------|
           EOF
-          # Display function: hash → direct hash, branch → branch (hash)
           ksu_display_value() {
             local input="$1"
             local resolved="$2"
@@ -1207,4 +1152,3 @@ jobs:
               echo "- \`$name\` (${size_mb} MB)" >> $GITHUB_STEP_SUMMARY
             fi
           done
-# ci: register on default branch
