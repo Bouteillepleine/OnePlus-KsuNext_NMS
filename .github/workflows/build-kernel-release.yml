@@ -863,9 +863,14 @@ jobs:
           
           
           
-          MOD_VER=$(curl -fsSL https://raw.githubusercontent.com/Bouteillepleine/nomount/suite/module/module.prop 2>/dev/null | awk -F= '/^version=/{print $2}')
-          MOD_VER="${MOD_VER:-v1.0.5}"
-          MOD_ASSET="00_NoMount-Module-${MOD_VER}.zip"
+          MOD_ASSET=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/Bouteillepleine/nomount/releases/latest 2>/dev/null | grep -oE '"name": *"00_NoMount-Module-[^"]+\.zip"' | head -1 | sed 's/.*"\(00_NoMount[^"]*\)"/\1/')
+          if [ -z "$MOD_ASSET" ]; then
+            MOD_VER=$(curl -fsSL https://raw.githubusercontent.com/Bouteillepleine/nomount/suite/module/module.prop 2>/dev/null | awk -F= '/^version=/{print $2}')
+            MOD_VER="${MOD_VER:-v1.0.5}"
+            MOD_ASSET="00_NoMount-Module-${MOD_VER}.zip"
+          fi
+          MOD_VER=$(printf '%s' "$MOD_ASSET" | sed 's/^00_NoMount-Module-//; s/\.zip$//')
+          echo "NoMount Suite asset: $MOD_ASSET"
 
           cat << EOF > release_notes.md
           # KernelSU Next 📦 NoMount (v$NOMOUNT_VERSION)
