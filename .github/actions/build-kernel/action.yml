@@ -283,15 +283,10 @@ runs:
           errors+=("Input 'unicode' contains invalid characters. Allowed: 'true' or 'false'. Got: '$unicode'")
         fi
         
-        # OP_C_COMPILER currently has no checks!
         
-        # OP_RUST_COMPILER currently has no checks!
         
-        # OP_ZYC_COMPILER currently has no checks!
         
-        # OP_BINDGEN currently has no checks!
         
-        # OP_BLACKLIST_MODULES currently has no checks!
         
         if [[ -z "$ds" ]]; then
           errors+=("Input 'ds' cannot be empty")
@@ -369,7 +364,6 @@ runs:
         mkdir -p "$ARTIFACTS_DIR"
         mkdir -p "$DEBUG_ARTIFACTS_DIR"
         
-        # Save to environment for later steps
         echo "CONFIG_FOLDER=$CONFIG_DIR" >> "$GITHUB_ENV"
         echo "ARTIFACTS_FOLDER=$ARTIFACTS_DIR" >> "$GITHUB_ENV"
         echo "KERNEL_PLATFORM_FOLDER=$KERNEL_PLATFORM_DIR" >> "$GITHUB_ENV"
@@ -386,7 +380,6 @@ runs:
     - name: Set Kernel build-tools to Path
       shell: bash
       run: |
-        # Set Kernel build-tools to Path
         set -euo pipefail
         echo "${KERNEL_PLATFORM_FOLDER}/prebuilts/kernel-build-tools/linux-x86/bin/" >> $GITHUB_PATH
         echo "${KERNEL_PLATFORM_FOLDER}/prebuilts/kernel-build-tools/linux_musl-x86/bin/" >> $GITHUB_PATH
@@ -459,14 +452,12 @@ runs:
     - name: Check or Detect Clang
       shell: bash
       run: |
-        # Check or Detect Clang
         set -euo pipefail
         echo "::group::Detect Clang"
         CLANG_FOUND=false
         CLANG_BIN=""
         
         if [ -n "$OP_ZYC_COMPILER" ]; then
-          # Priority 1: User explicitly wants ZyC compiler
           echo "OP_ZYC_COMPILER detected as download link: $OP_ZYC_COMPILER"
           
           ZYC_DIR="$CONFIG_FOLDER/compiler/zyc"
@@ -499,15 +490,11 @@ runs:
           done
         
           if [ "$download_success" = true ]; then
-            # Extract
             echo "Extracting to $ZYC_DIR ..."
             if tar -xzf "$TEMP_TAR" -C "$ZYC_DIR" 2>/dev/null; then
-              # Symlink extraction fix
               tar -xzf "$TEMP_TAR" -C "$ZYC_DIR" 2>/dev/null || true
-              # Cleanup
               rm -f "$TEMP_TAR"
               
-              # Verify clang exists
               if [ -x "$ZYC_DIR/bin/clang" ]; then
                   CLANG_BIN="$ZYC_DIR/bin"
                   CLANG_FOUND=true
@@ -523,7 +510,6 @@ runs:
           fi
         
         elif [ -n "$OP_C_COMPILER" ]; then
-          # Priority 2: User specified a custom C compiler
           if [ -x "$CONFIG_FOLDER/$OP_C_COMPILER/clang" ]; then
             CLANG_BIN="$CONFIG_FOLDER/$OP_C_COMPILER"
             CLANG_FOUND=true
@@ -533,7 +519,6 @@ runs:
         fi
         
         if [ "$CLANG_FOUND" = false ]; then
-          # Priority 3: Auto-detect from prebuilts (when both variables are empty / user clang not found)
           for base in "$KERNEL_PLATFORM_FOLDER/prebuilts" "$KERNEL_PLATFORM_FOLDER/prebuilts-master"; do
             [ -d "$base/clang/host/linux-x86" ] || continue
             latest=$(ls -d "$base/clang/host/linux-x86/clang-r"* 2>/dev/null | sort -V | tail -n1 || true)
@@ -546,7 +531,6 @@ runs:
         fi
         
         if [ "$CLANG_FOUND" = false ] && command -v clang >/dev/null 2>&1; then
-          # Priority 4: Fallback to system-installed clang
           CLANG_BIN="$(dirname "$(command -v clang)")"
           CLANG_FOUND=true
           echo "Using system clang."
@@ -581,7 +565,6 @@ runs:
       shell: bash
       if: ${{ env.OP_RUST_BUILD == 'true' }}
       run: |
-        # Check or Detect Rust & bindgen
         set -euo pipefail
         echo "::group::Detect Rust & bindgen"
         RUSTC_FOUND=false
@@ -647,13 +630,11 @@ runs:
       shell: bash
       if: ${{ env.OP_RUST_BUILD == 'true'  && !env.BINDGEN_BIN_PATH }}
       run: |
-        # Install bindgen via cargo (no full rustc needed)
         set -euo pipefail
         echo "::group::Install bindgen only (no rustc)"
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
         source $HOME/.cargo/env
         
-        # Install bindgen CLI only (~50-100MB total)
         cargo install bindgen-cli --version 0.69.5
         
         BINDGEN=$(which bindgen)
@@ -661,7 +642,6 @@ runs:
         echo "$BINDGEN_BIN" >> $GITHUB_PATH
         echo "BINDGEN=$BINDGEN" >> "$GITHUB_ENV"
         
-        # Verify
         bindgen --version
         echo "::endgroup::"
 
@@ -669,7 +649,6 @@ runs:
       shell: bash
       if: ${{ env.OP_RUST_BUILD == 'true' }}
       run: |
-        # Test Rust & bindgen
         set -euo pipefail
         echo "::group::Test Rust & bindgen"
         cd "$COMMON_KERNEL_FOLDER"
@@ -699,13 +678,6 @@ runs:
         
         echo "/usr/lib/ccache" >> $GITHUB_PATH
 
-        # OFF for the build. It was only ever set (to true) in the
-        # normalize-before-save step, which runs AFTER compilation -- so the build
-        # itself inherited ccache's default, which is on. The inode cache maps
-        # (dev, inode, size, mtime) -> content hash to skip re-hashing; the patched
-        # sources this builder drops in are the one place that mapping can go
-        # stale, and a wrong object here ships a kernel whose behaviour does not
-        # match its source. Re-hashing a few source files is not worth that risk.
         echo "CCACHE_INODECACHE=false" >> $GITHUB_ENV
         
         echo "Current ccache configuration:"
@@ -940,26 +912,15 @@ runs:
         git clone --depth 1 -b hookless https://github.com/Bouteillepleine/kbuild.git "$NM_SRC"
         NM_PATCH="$NM_SRC/hookless/patches/nomount_${KERNEL_VER}_kernel_integration.patch"
         DEFCONFIG="$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
-        # Fail-closed: OP_NMS asked for a NoMount kernel, so a missing integration
-        # patch must not yield a green build with no NoMount and no CONFIG_NOMOUNT=y.
         if [ ! -f "$NM_PATCH" ]; then
           echo "::error::No hookless NoMount patch for KERNEL_VER=${KERNEL_VER} ($NM_PATCH)"
           exit 1
         else
           cd "$COMMON_KERNEL_FOLDER"
-          # rm first: `cp -f` overwrites IN PLACE, keeping the inode, which is
-          # what ccache's inode cache keys on. A fresh inode cannot alias a
-          # stale (inode -> content hash) entry from a restored cache.
           rm -f fs/nomount.c fs/nomount.h
           cp "$NM_SRC/hookless/src/nomount.c" fs/nomount.c
           cp "$NM_SRC/hookless/src/nomount.h" fs/nomount.h
-          # fuzz=1, not 3: only the task_mmu.c hunk needs slack (its header declares
-          # 6 context lines but carries 5), and 1 is enough on every GKI 5.10-6.12
-          # tree and on the OnePlus vendor trees. Wider fuzz can silently place a
-          # hunk in the wrong function.
           if patch -p1 --forward --fuzz=1 < "$NM_PATCH"; then
-            # patch exits 0 even when fuzz relocated a hunk, so assert each edit
-            # actually landed instead of trusting the exit code.
             grep -q 'config NOMOUNT' fs/Kconfig \
               || { echo "::error::NoMount: fs/Kconfig edit missing"; exit 1; }
             grep -qF 'obj-$(CONFIG_NOMOUNT) += nomount.o' fs/Makefile \
@@ -982,9 +943,6 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        # NM_MODULE_VERSION in nomount.h is NoMount's analogue of SUSFS_VERSION: it names
-        # the flashable ZIPs and drives the release tag, so read it back from the header
-        # that was actually copied into the tree rather than hardcoding it here.
         NM_HDR="$COMMON_KERNEL_FOLDER/fs/nomount.h"
         NMVER=""
         if [ -f "$NM_HDR" ]; then
@@ -1018,9 +976,6 @@ runs:
         HOOK="$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_hook"
         KV="${KERNEL_VER}"
         dos2unix "$HOOK"/*.patch 2>/dev/null || true
-        # Fail-closed apply: apply if it applies, tolerate if already applied, but FAIL
-        # the build if a patch neither applies nor is already present — so we never ship a
-        # green-but-uncloaked kernel (the entire purpose of these builders).
         apply_or_die() {
           local p="$1"
           if patch -p1 --forward --dry-run < "$p" >/dev/null 2>&1; then
@@ -1031,9 +986,6 @@ runs:
             echo "::error::oracle patch neither applied nor already present: $(basename "$p")"; exit 1
           fi
         }
-        # Apply the first candidate that fits (or is already applied), and fail if
-        # none do. Same fail-closed contract as apply_or_die, for the patches that
-        # ship in per-kernel variants.
         apply_first_of() {
           local p
           for p in "$@"; do
@@ -1047,28 +999,6 @@ runs:
         }
         cd "$COMMON_KERNEL_FOLDER"
         apply_or_die "$HOOK/hide_selinux_selinuxfs.patch"
-        # Pick the variant that FITS the tree rather than keying on a version
-        # string. The old tests were `[ "$KV" = "6.12" ]` and `case 6.6|6.12`, so
-        # any NEWER kernel silently selected the pre-6.12 variant -- failing
-        # closed through apply_or_die, but as a broken build on a new version
-        # rather than as a decision anyone reviewed.
-        #
-        # ORDER IS LOAD-BEARING for the attr pair: most specific FIRST. Measured
-        # against the real OnePlus trees (2026-08-23), these are NOT mutually
-        # exclusive:
-        #
-        #             5.10  5.15  6.1   6.6   6.12
-        #   attr_6_12   no    no   no    no  APPLIES
-        #   attr       yes   yes  yes   yes  APPLIES   <-- both fit on 6.12
-        #   audit       no    no   no  yes   yes
-        #   audit_legacy yes  yes  yes   no    no      (this pair IS exclusive)
-        #
-        # On 6.12 the old attr patch still applies because selinux_lsm_setattr()
-        # -- the function it targets -- survives alongside the new
-        # selinux_setprocattr() that calls lsm_name_to_attr(). Landing in the
-        # inner one would still gate the write, but it is not the hook that was
-        # reviewed, so the 6.12 variant has to be offered first and win.
-        # Same selection the kernel_patches verifier makes.
         apply_first_of "$HOOK/hide_selinux_attr_6_12.patch" "$HOOK/hide_selinux_attr.patch"
         apply_first_of "$HOOK/quiet_selinux_audit.patch" "$HOOK/quiet_selinux_audit_legacy.patch"
         apply_or_die "$HOOK/quiet_selinux_audit_user.patch"
@@ -1085,14 +1015,11 @@ runs:
         PH="$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_pathhide"
         KV="${KERNEL_VER}"
         cd "$COMMON_KERNEL_FOLDER"
-        # Fresh inode, same reasoning as the nomount copy above.
         rm -f fs/pathhide.c fs/pathhide.h
         cp "$PH/pathhide.c" fs/pathhide.c
         cp "$PH/pathhide.h" fs/pathhide.h
         dos2unix fs/pathhide.c fs/pathhide.h 2>/dev/null || true
         dos2unix "$PH"/*.patch 2>/dev/null || true
-        # Fail-closed apply, same contract as the _hook step: apply, tolerate an
-        # already-applied tree, but never continue on a patch that did neither.
         apply_or_die() {
           local p="$1"
           if [ ! -f "$p" ]; then
@@ -1107,13 +1034,8 @@ runs:
           fi
         }
         apply_or_die "$PH/pathhide_${KV}_integration.patch"
-        # /proc/<pid>/map_files leaks the ranges of mappings hidden from maps, which is
-        # enough on its own to prove concealment. Fail-closed like the rest of the step.
         apply_or_die "$PH/pathhide_mapfiles_${KV}_integration.patch"
-        # wire pathhide.o into the fs build. Appended (not patched) because the Makefile
-        # context differs across Qualcomm (Google PGO_PROFILE line) and MediaTek trees.
         grep -q 'obj-y += pathhide.o' fs/Makefile || echo 'obj-y += pathhide.o' >> fs/Makefile
-        # marker check: pathhide.o must be wired into the fs build or the cloak is dead code
         grep -q 'pathhide' fs/Makefile || { echo "::error::pathhide.o not wired into fs/Makefile"; exit 1; }
         echo "pathhide applied"
         echo "::endgroup::"
@@ -1370,7 +1292,6 @@ runs:
           for p in sysctl_add_proc_dou8vec_minmax.patch \
                    sysctl_fix_data-races_in_proc_dou8vec_minmax.patch; do
             if [ ! -f "$BBR3_DIR/$p" ]; then
-              # Fail here rather than 20 minutes later in a confusing compile error.
               echo "::error::BBRv3 needs $p but it is missing from $BBR3_DIR"
               echo "Without it, $ANDROID_VER-$KERNEL_VER cannot compile BBRv3."
               exit 1
@@ -1570,7 +1491,6 @@ runs:
         echo "Disabling Vendor / Kernel Modules"
         cd "$COMMON_KERNEL_FOLDER"
 
-        # Define modules that MUST NEVER be blacklisted
         RISKY_MODULES=("coresight" "rust_binder" "msm_kgsl" "camera")
         
         declare -a modules=()
@@ -1579,12 +1499,10 @@ runs:
           [[ -n "$mod" ]] && modules+=("$mod")
         done
         
-        # Safety Validation Loop (Filter out risky modules)
         declare -a validated_modules=()
         for mod in "${modules[@]}"; do
           is_risky=false
           
-          # Check if current module matches any risky module
           for risky in "${RISKY_MODULES[@]}"; do
             if [ "$mod" = "$risky" ]; then
               is_risky=true
@@ -1593,7 +1511,6 @@ runs:
             fi
           done
           
-          # Only keep the module if it's safe
           if [ "$is_risky" = false ]; then
             validated_modules+=("$mod")
           fi
@@ -1840,7 +1757,6 @@ runs:
         esac
         
         
-        # Strip KUnit test symbols that vendor defconfig may pull in
         disable_list=(
           CONFIG_REGMAP_KUNIT
           CONFIG_INPUT_KUNIT_TEST
@@ -1861,9 +1777,6 @@ runs:
 
         make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" O="$OUT" olddefconfig
 
-        # olddefconfig silently drops symbols the pulled KSU source does not define,
-        # so a typo or an upstream rename yields a green build missing the feature.
-        # Assert the ones we deliberately set actually survived into .config.
         for sym in CONFIG_KSU; do
           grep -q "^${sym}=y" "$OUT/.config" \
             || { echo "::error::${sym} was dropped by olddefconfig (not defined by the KSU source?)"; exit 1; }
@@ -1962,7 +1875,6 @@ runs:
         ccache -c
         
         echo "Perform ccache eviction!"
-        # 3h = 10800s using seconds to support older ccache
         ccache --evict-older-than 10800s
         
         if [ "${{ inputs.debug }}" == "true" ]; then
@@ -2028,12 +1940,6 @@ runs:
         fi
         
         if [ -f "$COMMON_KERNEL_FOLDER/build.log" ]; then
-          # Count only real (compiler) warnings. Exclude harmless config-processing noise:
-          #  - vendor Kconfig quirks (e.g. drivers/misc/mediatek/**/Kconfig: "ignoring
-          #    unsupported character", "no new line at end of file", type redefinitions)
-          #  - defconfig "override: reassigning to symbol X" (feature steps re-set an
-          #    existing symbol; the last value wins, nothing is broken).
-          # Both are emitted from *:Kconfig / *:defconfig, never from a real .c/.h compile.
           WARNINGS_COUNT="$(grep -iE '\bwarning:' "$COMMON_KERNEL_FOLDER/build.log" 2>/dev/null \
             | grep -cvE '(Kconfig|defconfig):[0-9]+:warning:' || true)"
           [ -n "$WARNINGS_COUNT" ] || WARNINGS_COUNT="0"
@@ -2104,8 +2010,6 @@ runs:
         
         sed -i 's/do.check_boot_version=.*/do.check_boot_version=1/' anykernel.sh
         
-        # BBG efisp/abl whitelist flash control is baked into the AnyKernel3
-        # (Bouteillepleine/AnyKernel3 suite) — no build-time anykernel.sh patch needed.
         
         ZIP_MODEL=$(echo "$OP_MODEL" | sed 's/-[0-9]\+\.[0-9]\+\.[0-9]\+$//')
         if [ "${{ env.OP_NMS }}" = true ]; then
@@ -2148,7 +2052,6 @@ runs:
       run: |
         set -euo pipefail
         
-        # Get commit SHAs with fallback
         KSU_SHA="${KSU_COMMIT_SHA:-unknown}"
         
         {
@@ -2194,7 +2097,6 @@ runs:
           echo "Artifact Name: ${{ env.ZIP_NAME }}"
         } | tee summary.txt
         
-        # One-line header so the collapsed block is scannable across 100+ devices
         SUM_HEAD="🎯 <b>${{ env.OP_MODEL }}</b> — ${{ steps.save_metadata.outputs.kernel_version }}"
         SUM_HEAD="${SUM_HEAD} · ⚡KernelSU Next ${KSUVER:-?}"
         if [ "${{ env.OP_NMS }}" = true ]; then SUM_HEAD="${SUM_HEAD} · NoMount ${NMVER:-?}"; fi
