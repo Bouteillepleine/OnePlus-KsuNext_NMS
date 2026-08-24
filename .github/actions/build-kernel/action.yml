@@ -998,7 +998,7 @@ runs:
           echo "::error::no variant applied for: $*"; exit 1
         }
         cd "$COMMON_KERNEL_FOLDER"
-        apply_or_die "$HOOK/hide_selinux_selinuxfs.patch"
+        apply_first_of "$HOOK/hide_selinux_selinuxfs_6_12.patch" "$HOOK/hide_selinux_selinuxfs.patch"
         apply_first_of "$HOOK/hide_selinux_attr_6_12.patch" "$HOOK/hide_selinux_attr.patch"
         apply_first_of "$HOOK/quiet_selinux_audit.patch" "$HOOK/quiet_selinux_audit_legacy.patch"
         apply_or_die "$HOOK/quiet_selinux_audit_user.patch"
