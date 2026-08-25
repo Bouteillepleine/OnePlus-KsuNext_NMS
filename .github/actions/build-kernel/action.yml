@@ -46,11 +46,6 @@ inputs:
     required: false
     type: string
     default: hookless
-  enable_ghost:
-    description: 'Apply the _ghost existence-oracle cloak (O_PATH / *xattr / link / trailing-ENOTDIR / truncate / utimensat / chmod). ON by default. Boot-verified on 6.12 (OP15); 6.6, 6.1, 5.15 and 5.10 are apply- and compile-verified only. Inert unless the Suite populates its tables (needs engine v26). Turn OFF to bisect a boot failure.'
-    required: false
-    type: boolean
-    default: true
   github_token:
     description: 'GitHub Token'
     required: true
@@ -1079,7 +1074,6 @@ runs:
 
     - name: Apply _ghost existence-oracle cloak
       shell: bash
-      if: ${{ inputs.enable_ghost == true || inputs.enable_ghost == 'true' }}
       run: |
         set -euo pipefail
         echo "::group::Apply _ghost (O_PATH / *xattr / link / ENOTDIR existence cloak)"
@@ -1185,7 +1179,7 @@ runs:
         if grep -q 'proc_create' fs/proc/ghost.c; then
           echo "::error::_ghost: ghost.c owns a /proc node - that is a detection surface in its own right"; exit 1
         fi
-        echo "_ghost applied for ${KV} (default on; set enable_ghost=false to omit) - boot-verified on 6.12 only"
+        echo "_ghost applied for ${KV} - not optional; boot-verified on 6.12, 6.1 and 5.15"
         echo "::endgroup::"
 
     - name: Apply Other Patches

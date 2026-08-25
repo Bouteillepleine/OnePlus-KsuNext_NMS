@@ -65,11 +65,6 @@ on:
         required: false
         type: boolean
         default: false
-      enable_ghost:
-        description: 'Apply the _ghost existence-oracle cloak (O_PATH / *xattr / link / trailing-ENOTDIR / truncate / utimensat / chmod). ON by default. Boot-verified on 6.12 (OP15); 6.6, 6.1, 5.15 and 5.10 are apply- and compile-verified only. Inert unless the Suite populates its tables (needs engine v26). Turn OFF to bisect a boot failure.'
-        required: false
-        type: boolean
-        default: true
       nomount_ref:
         description: 'kbuild branch/ref for the hookless NoMount src + patches (default hookless; set e.g. test/sprivate to validate a branch before merge)'
         required: false
@@ -541,7 +536,6 @@ jobs:
           build_timestamp: ${{ inputs.build_timestamp }}
           enable_adios: ${{ inputs.enable_adios }}
           nomount_ref: ${{ inputs.nomount_ref }}
-          enable_ghost: ${{ inputs.enable_ghost }}
           clean: ${{ inputs.clean_build }}
           debug: ${{ inputs.debug }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
