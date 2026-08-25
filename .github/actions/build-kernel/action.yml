@@ -1080,17 +1080,11 @@ runs:
         GH="$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_ghost"
         KV="${KERNEL_VER}"
         cd "$COMMON_KERNEL_FOLDER"
-        # ghost.c does #include "ghost.h", so the two must stay co-located, and
-        # ghost_build_integration.patch wires fs/proc/Makefile -- NOT fs/Makefile,
-        # which the NoMount engine patch and the pathhide step both edit.
         rm -f fs/proc/ghost.c fs/proc/ghost.h
         cp "$GH/ghost.c" fs/proc/ghost.c
         cp "$GH/ghost.h" fs/proc/ghost.h
         dos2unix fs/proc/ghost.c fs/proc/ghost.h 2>/dev/null || true
         dos2unix "$GH"/*.patch 2>/dev/null || true
-        # -F0 everywhere: three of the four path_*xattr() bodies are
-        # character-identical below `retry:`, so a fuzz-placed hunk can land a
-        # -ENOENT guard in the wrong wrapper without saying so.
         apply_or_die() {
           local p="$1"
           if [ ! -f "$p" ]; then
@@ -1129,12 +1123,6 @@ runs:
           done
           echo "::error::no _ghost variant applied for: $*"; exit 1
         }
-        # Measured 2026-08-25 with patch -F0 over 21 distinct fleet SoCs
-        # (Qualcomm sm6375..sm8850 and MediaTek mt6789..mt6993): exactly one
-        # variant per family applies on every one of them, and the pick depends
-        # only on KERNEL_VER. NB 6.6: OnePlus's android15-6.6 carries the
-        # 6.12-era fs/xattr.c restructure, so it wants ghost_xattr_6_12.patch --
-        # ghost_xattr_6_6.patch fits no tree in this fleet.
         case "$KV" in
           6.12|6.6)
             REQ_XATTR=ghost_xattr_6_12.patch
@@ -1159,11 +1147,6 @@ runs:
         apply_first_of "$REQ_XATTR" "$GH/ghost_xattr_6_12.patch" "$GH/ghost_xattr_6_6.patch" "$GH/ghost_xattr_5_15.patch" "$GH/ghost_xattr.patch"
         apply_first_of "$REQ_LINKAT" "$GH/ghost_linkat_5_15.patch" "$GH/ghost_linkat.patch"
         apply_first_of ghost_notdir.patch "$GH/ghost_notdir.patch" "$GH/ghost_notdir_5_10.patch"
-        # The EROFS half of the class: mnt_want_write() answers before existence is
-        # re-validated, so these three report EROFS on a hidden path where an absent
-        # one reports ENOENT -- and a stock VISIBLE file also reports EROFS, which is
-        # what makes it a tell. truncate and utimensat have one shape across the whole
-        # fleet; chmod splits at 6.6, hence REQ_CHMOD.
         apply_or_die "$GH/ghost_truncate.patch"
         apply_or_die "$GH/ghost_utimes.patch"
         apply_first_of "$REQ_CHMOD" "$GH/ghost_chmod.patch" "$GH/ghost_chmod_5_10.patch"
