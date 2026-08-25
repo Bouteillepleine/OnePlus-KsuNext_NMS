@@ -1168,10 +1168,15 @@ runs:
         apply_or_die "$GH/ghost_truncate.patch"
         apply_or_die "$GH/ghost_utimes.patch"
         apply_first_of "$REQ_CHMOD" "$GH/ghost_chmod.patch" "$GH/ghost_chmod_5_10.patch"
+        apply_or_die "$GH/ghost_create.patch"
         apply_or_die "$GH/ghost_build_integration.patch"
         grep -q 'ghost.o' fs/proc/Makefile || { echo "::error::ghost.o not wired into fs/proc/Makefile"; exit 1; }
         grep -q 'ghost_hidden_path' fs/namei.c || { echo "::error::_ghost: fs/namei.c guards missing"; exit 1; }
         grep -q 'ghost_hidden_path' fs/xattr.c || { echo "::error::_ghost: fs/xattr.c guards missing"; exit 1; }
+        grep -q 'err2 && ghost_hidden_path' fs/namei.c || { echo "::error::_ghost: filename_create guard missing"; exit 1; }
+        if awk '/^int do_renameat2/,/^}/' fs/namei.c | grep -q 'ghost_hidden_path'; then
+          echo "::error::_ghost: create guard landed in do_renameat2"; exit 1
+        fi
         if grep -q 'proc_create' fs/proc/ghost.c; then
           echo "::error::_ghost: ghost.c owns a /proc node - that is a detection surface in its own right"; exit 1
         fi
