@@ -41,6 +41,11 @@ inputs:
     required: false
     type: boolean
     default: false
+  enable_ghost:
+    description: 'Apply the _ghost existence-oracle cloak (O_PATH / *xattr / link / trailing-ENOTDIR). OPT-IN, default false: not boot-tested, and a wrong rule returns ENOENT to real syscalls instead of merely omitting a line.'
+    required: false
+    type: boolean
+    default: false
   github_token:
     description: 'GitHub Token'
     required: true
@@ -1065,6 +1070,101 @@ runs:
         grep -q 'obj-y += pathhide.o' fs/Makefile || echo 'obj-y += pathhide.o' >> fs/Makefile
         grep -q 'pathhide' fs/Makefile || { echo "::error::pathhide.o not wired into fs/Makefile"; exit 1; }
         echo "pathhide applied"
+        echo "::endgroup::"
+
+    - name: Apply _ghost existence-oracle cloak
+      shell: bash
+      if: ${{ inputs.enable_ghost == true || inputs.enable_ghost == 'true' }}
+      run: |
+        set -euo pipefail
+        echo "::group::Apply _ghost (O_PATH / *xattr / link / ENOTDIR existence cloak)"
+        GH="$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/_ghost"
+        KV="${KERNEL_VER}"
+        cd "$COMMON_KERNEL_FOLDER"
+        # ghost.c does #include "ghost.h", so the two must stay co-located, and
+        # ghost_build_integration.patch wires fs/proc/Makefile -- NOT fs/Makefile,
+        # which the NoMount engine patch and the pathhide step both edit.
+        rm -f fs/proc/ghost.c fs/proc/ghost.h
+        cp "$GH/ghost.c" fs/proc/ghost.c
+        cp "$GH/ghost.h" fs/proc/ghost.h
+        dos2unix fs/proc/ghost.c fs/proc/ghost.h 2>/dev/null || true
+        dos2unix "$GH"/*.patch 2>/dev/null || true
+        # -F0 everywhere: three of the four path_*xattr() bodies are
+        # character-identical below `retry:`, so a fuzz-placed hunk can land a
+        # -ENOENT guard in the wrong wrapper without saying so.
+        apply_or_die() {
+          local p="$1"
+          if [ ! -f "$p" ]; then
+            echo "::error::missing _ghost patch: $(basename "$p")"; exit 1
+          fi
+          if patch -p1 -F0 --forward --dry-run < "$p" >/dev/null 2>&1; then
+            patch -p1 -F0 --forward < "$p"
+          elif patch -p1 -F0 --reverse --dry-run < "$p" >/dev/null 2>&1; then
+            echo "already applied: $(basename "$p")"
+          else
+            echo "::error::_ghost patch neither applied nor already present: $(basename "$p")"; exit 1
+          fi
+        }
+        require_variant() {
+          local want="$1" got="$2"
+          if [ "$want" = "-" ] || [ "$want" = "$got" ]; then
+            return 0
+          fi
+          echo "::error::_ghost variant mismatch on KERNEL_VER=$KV: '$want' is required on this kernel but did not apply, and '$got' did."
+          echo "::error::The variants do not target the same function shapes, so falling back can place a -ENOENT guard in the wrong wrapper. Refit '$want' to this tree instead of falling back."
+          exit 1
+        }
+        apply_first_of() {
+          local want="$1"; shift
+          local p sel
+          for p in "$@"; do
+            if patch -p1 -F0 --forward --dry-run < "$p" >/dev/null 2>&1; then
+              sel="$(basename "$p")"
+              require_variant "$want" "$sel"
+              patch -p1 -F0 --forward < "$p"; echo "selected ($KV): $sel"; return 0
+            elif patch -p1 -F0 --reverse --dry-run < "$p" >/dev/null 2>&1; then
+              sel="$(basename "$p")"
+              require_variant "$want" "$sel"
+              echo "already applied ($KV): $sel"; return 0
+            fi
+          done
+          echo "::error::no _ghost variant applied for: $*"; exit 1
+        }
+        # Measured 2026-08-25 with patch -F0 over 21 distinct fleet SoCs
+        # (Qualcomm sm6375..sm8850 and MediaTek mt6789..mt6993): exactly one
+        # variant per family applies on every one of them, and the pick depends
+        # only on KERNEL_VER. NB 6.6: OnePlus's android15-6.6 carries the
+        # 6.12-era fs/xattr.c restructure, so it wants ghost_xattr_6_12.patch --
+        # ghost_xattr_6_6.patch fits no tree in this fleet.
+        case "$KV" in
+          6.12|6.6)
+            REQ_XATTR=ghost_xattr_6_12.patch
+            REQ_LINKAT=ghost_linkat_5_15.patch
+            ;;
+          6.1|5.15)
+            REQ_XATTR=ghost_xattr_5_15.patch
+            REQ_LINKAT=ghost_linkat_5_15.patch
+            ;;
+          5.10)
+            REQ_XATTR=ghost_xattr.patch
+            REQ_LINKAT=ghost_linkat.patch
+            ;;
+          *)
+            echo "::error::unknown KERNEL_VER='$KV' - refusing to guess which _ghost variant is required"; exit 1
+            ;;
+        esac
+        apply_first_of ghost_o_path.patch "$GH/ghost_o_path.patch" "$GH/ghost_o_path_legacy.patch"
+        apply_first_of "$REQ_XATTR" "$GH/ghost_xattr_6_12.patch" "$GH/ghost_xattr_6_6.patch" "$GH/ghost_xattr_5_15.patch" "$GH/ghost_xattr.patch"
+        apply_first_of "$REQ_LINKAT" "$GH/ghost_linkat_5_15.patch" "$GH/ghost_linkat.patch"
+        apply_first_of ghost_notdir.patch "$GH/ghost_notdir.patch" "$GH/ghost_notdir_5_10.patch"
+        apply_or_die "$GH/ghost_build_integration.patch"
+        grep -q 'ghost.o' fs/proc/Makefile || { echo "::error::ghost.o not wired into fs/proc/Makefile"; exit 1; }
+        grep -q 'ghost_hidden_path' fs/namei.c || { echo "::error::_ghost: fs/namei.c guards missing"; exit 1; }
+        grep -q 'ghost_hidden_path' fs/xattr.c || { echo "::error::_ghost: fs/xattr.c guards missing"; exit 1; }
+        if grep -q 'proc_create' fs/proc/ghost.c; then
+          echo "::error::_ghost: ghost.c owns a /proc node - that is a detection surface in its own right"; exit 1
+        fi
+        echo "_ghost applied for ${KV} (opt-in: enable_ghost=true) - NOT boot-tested"
         echo "::endgroup::"
 
     - name: Apply Other Patches
