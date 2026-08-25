@@ -863,25 +863,9 @@ jobs:
           
           
           
-          # NoMount Suite is built and released by the nomount project, NOT by this
-          # workflow -- nothing below downloads it and the upload step only ever
-          # pushes ./downloaded-artifacts/*.zip plus the two 00_ metadata files. So
-          # the Suite must be linked at ITS OWN release; a link under this repo's
-          # release tag is a guaranteed 404 (which is exactly what shipped before).
-          #
-          # Linking rather than mirroring is also the more robust of the two:
-          #   - no extra token scope or asset download in the release job, and no
-          #     new failure mode between "kernel built" and "release published";
-          #   - the link keeps working after the Suite ships a new version, whereas
-          #     a mirrored copy freezes the Suite at whatever it was on the day the
-          #     kernel was cut (the Suite moves far faster than the kernel does).
-          # The trade is one extra hop for the user, which the release body already
-          # frames as a separate step-2 download from a separate project.
           MOD_REPO="Bouteillepleine/nomount"
           MOD_JSON=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/${MOD_REPO}/releases/latest" 2>/dev/null || true)
           MOD_ASSET=$(printf '%s' "$MOD_JSON" | grep -oE '"name": *"00_NoMount-Module-[^"]+\.zip"' | head -1 | sed 's/.*"\(00_NoMount[^"]*\)"/\1/')
-          # Take the download URL straight from the API rather than rebuilding it,
-          # so it can never be a URL the release does not actually have.
           MOD_URL=$(printf '%s' "$MOD_JSON" | grep -oE '"browser_download_url": *"[^"]*/00_NoMount-Module-[^"]+\.zip"' | head -1 | sed 's/.*: *"//; s/"$//')
           if [ -z "$MOD_ASSET" ]; then
             MOD_VER=$(curl -fsSL "https://raw.githubusercontent.com/${MOD_REPO}/suite/module/module.prop" 2>/dev/null | awk -F= '/^version=/{print $2}')
@@ -889,8 +873,6 @@ jobs:
             MOD_ASSET="00_NoMount-Module-${MOD_VER}.zip"
           fi
           if [ -z "$MOD_URL" ]; then
-            # Asset name was guessed, not read from a real release -- point at the
-            # releases page instead of a reconstructed download URL that may 404.
             MOD_URL="${{ github.server_url }}/${MOD_REPO}/releases/latest"
             echo "::warning::Could not read the NoMount Suite asset URL from ${MOD_REPO}; linking the releases page instead."
           fi
@@ -918,7 +900,6 @@ jobs:
 
           After flashing the kernel and rebooting:
 
-          ### ➡️ [⬇️ Download NoMount Suite: \`$MOD_ASSET\`]($MOD_URL)
 
           Then: KernelSU Next Manager → **Modules → Install from storage** → select \`$MOD_ASSET\` → **reboot**.
 
