@@ -41,6 +41,11 @@ inputs:
     required: false
     type: boolean
     default: false
+  nomount_ref:
+    description: 'kbuild branch/ref to source the hookless NoMount src + patches from (default hookless; set a test branch to validate before merge)'
+    required: false
+    type: string
+    default: hookless
   enable_ghost:
     description: 'Apply the _ghost existence-oracle cloak (O_PATH / *xattr / link / trailing-ENOTDIR / truncate / utimensat / chmod). ON by default. Boot-verified on 6.12 (OP15); 6.6, 6.1, 5.15 and 5.10 are apply- and compile-verified only. Inert unless the Suite populates its tables (needs engine v26). Turn OFF to bisect a boot failure.'
     required: false
@@ -914,7 +919,7 @@ runs:
         echo "::group::Apply NoMount (hookless VFS) patch"
         NM_SRC="$GITHUB_WORKSPACE/nomount_hookless"
         rm -rf "$NM_SRC"
-        git clone --depth 1 -b hookless https://github.com/Bouteillepleine/kbuild.git "$NM_SRC"
+        git clone --depth 1 -b "${{ inputs.nomount_ref }}" https://github.com/Bouteillepleine/kbuild.git "$NM_SRC"
         NM_PATCH="$NM_SRC/hookless/patches/nomount_${KERNEL_VER}_kernel_integration.patch"
         DEFCONFIG="$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
         if [ ! -f "$NM_PATCH" ]; then

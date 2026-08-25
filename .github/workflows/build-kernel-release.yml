@@ -70,6 +70,11 @@ on:
         required: false
         type: boolean
         default: true
+      nomount_ref:
+        description: 'kbuild branch/ref for the hookless NoMount src + patches (default hookless; set e.g. test/sprivate to validate a branch before merge)'
+        required: false
+        type: string
+        default: hookless
       mirror_toolchains:
         description: 'Force toolchain sync before build — REQUIRED on the first run to populate the toolchain cache (auto-on for releases; ~99% of later test runs do not need it)'
         required: false
@@ -535,6 +540,7 @@ jobs:
           optimize_level: ${{ inputs.optimize_level }}
           build_timestamp: ${{ inputs.build_timestamp }}
           enable_adios: ${{ inputs.enable_adios }}
+          nomount_ref: ${{ inputs.nomount_ref }}
           enable_ghost: ${{ inputs.enable_ghost }}
           clean: ${{ inputs.clean_build }}
           debug: ${{ inputs.debug }}
