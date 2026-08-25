@@ -1140,14 +1140,17 @@ runs:
           6.12|6.6)
             REQ_XATTR=ghost_xattr_6_12.patch
             REQ_LINKAT=ghost_linkat_5_15.patch
+            REQ_CHMOD=ghost_chmod.patch
             ;;
           6.1|5.15)
             REQ_XATTR=ghost_xattr_5_15.patch
             REQ_LINKAT=ghost_linkat_5_15.patch
+            REQ_CHMOD=ghost_chmod_5_10.patch
             ;;
           5.10)
             REQ_XATTR=ghost_xattr.patch
             REQ_LINKAT=ghost_linkat.patch
+            REQ_CHMOD=ghost_chmod_5_10.patch
             ;;
           *)
             echo "::error::unknown KERNEL_VER='$KV' - refusing to guess which _ghost variant is required"; exit 1
@@ -1157,6 +1160,14 @@ runs:
         apply_first_of "$REQ_XATTR" "$GH/ghost_xattr_6_12.patch" "$GH/ghost_xattr_6_6.patch" "$GH/ghost_xattr_5_15.patch" "$GH/ghost_xattr.patch"
         apply_first_of "$REQ_LINKAT" "$GH/ghost_linkat_5_15.patch" "$GH/ghost_linkat.patch"
         apply_first_of ghost_notdir.patch "$GH/ghost_notdir.patch" "$GH/ghost_notdir_5_10.patch"
+        # The EROFS half of the class: mnt_want_write() answers before existence is
+        # re-validated, so these three report EROFS on a hidden path where an absent
+        # one reports ENOENT -- and a stock VISIBLE file also reports EROFS, which is
+        # what makes it a tell. truncate and utimensat have one shape across the whole
+        # fleet; chmod splits at 6.6, hence REQ_CHMOD.
+        apply_or_die "$GH/ghost_truncate.patch"
+        apply_or_die "$GH/ghost_utimes.patch"
+        apply_first_of "$REQ_CHMOD" "$GH/ghost_chmod.patch" "$GH/ghost_chmod_5_10.patch"
         apply_or_die "$GH/ghost_build_integration.patch"
         grep -q 'ghost.o' fs/proc/Makefile || { echo "::error::ghost.o not wired into fs/proc/Makefile"; exit 1; }
         grep -q 'ghost_hidden_path' fs/namei.c || { echo "::error::_ghost: fs/namei.c guards missing"; exit 1; }
