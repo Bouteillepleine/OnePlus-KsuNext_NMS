@@ -986,21 +986,78 @@ runs:
             echo "::error::oracle patch neither applied nor already present: $(basename "$p")"; exit 1
           fi
         }
+        # Which _hook variant this kernel version MUST end up with.
+        #
+        # The variants are NOT interchangeable, so "first one that applies wins"
+        # is not a safe selection rule on its own:
+        #   hide_selinux_attr_6_12.patch guards selinux_lsm_setattr() AND
+        #   selinux_inode_setxattr(); the legacy hide_selinux_attr.patch guards
+        #   selinux_setprocattr() only, leaving setxattr(security.selinux) a live
+        #   root oracle.
+        #   hide_selinux_selinuxfs_6_12.patch guards every selinuxfs write node;
+        #   the base one guards only the generic selinux_transaction_write()
+        #   dispatcher.
+        # The legacy patches apply cleanly on 6.12 as well, so an OEM tree that
+        # perturbs one _6_12 hunk would silently fall back, log a reassuring
+        # "selected:" line and ship a green build with the oracle reopened.
+        #
+        # REQ_* below names the basename that MUST be the selected one, or "-"
+        # for "whichever of the listed variants applies is correct here".
+        #
+        # 6.12 requires both _6_12 variants; a fallback there is a hard failure.
+        # 5.10/5.15/6.1/6.6 do not: the second hunk of hide_selinux_attr_6_12
+        # lands in selinux_lsm_setattr(), which the LSM-syscall series only
+        # introduced in 6.8, so it CANNOT apply at or below 6.6 and the legacy
+        # patch is the correct fit there rather than a downgrade. The _6_12
+        # selinuxfs variant is still tried first on those versions, so a tree
+        # that can take the richer one still gets it - it just is not mandatory.
+        case "$KV" in
+          6.12)
+            REQ_SFS=hide_selinux_selinuxfs_6_12.patch
+            REQ_ATTR=hide_selinux_attr_6_12.patch
+            ;;
+          5.10|5.15|6.1|6.6)
+            REQ_SFS=-
+            REQ_ATTR=-
+            ;;
+          *)
+            echo "::error::unknown KERNEL_VER='$KV' - refusing to guess which _hook variant is required"; exit 1
+            ;;
+        esac
+        require_variant() {
+          local want="$1" got="$2"
+          if [ "$want" = "-" ] || [ "$want" = "$got" ]; then
+            return 0
+          fi
+          echo "::error::_hook variant downgrade on KERNEL_VER=$KV: '$want' is required on this kernel but did not apply, and '$got' did."
+          echo "::error::These variants do not carry the same hunks, so falling back would silently drop SELinux oracle coverage (e.g. the selinux_inode_setxattr guard). Refit '$want' to this tree instead of falling back."
+          exit 1
+        }
+        # $1 = basename that MUST be the selected variant on this kernel, or "-".
         apply_first_of() {
-          local p
+          local want="$1"; shift
+          local p sel
           for p in "$@"; do
             if patch -p1 --forward --dry-run < "$p" >/dev/null 2>&1; then
-              patch -p1 --forward < "$p"; echo "selected: $(basename "$p")"; return 0
+              sel="$(basename "$p")"
+              require_variant "$want" "$sel"
+              patch -p1 --forward < "$p"; echo "selected ($KV): $sel"; return 0
             elif patch -p1 --reverse --dry-run < "$p" >/dev/null 2>&1; then
-              echo "already applied: $(basename "$p")"; return 0
+              sel="$(basename "$p")"
+              require_variant "$want" "$sel"
+              echo "already applied ($KV): $sel"; return 0
             fi
           done
           echo "::error::no variant applied for: $*"; exit 1
         }
         cd "$COMMON_KERNEL_FOLDER"
-        apply_first_of "$HOOK/hide_selinux_selinuxfs_6_12.patch" "$HOOK/hide_selinux_selinuxfs.patch"
-        apply_first_of "$HOOK/hide_selinux_attr_6_12.patch" "$HOOK/hide_selinux_attr.patch"
-        apply_first_of "$HOOK/quiet_selinux_audit.patch" "$HOOK/quiet_selinux_audit_legacy.patch"
+        apply_first_of "$REQ_SFS" "$HOOK/hide_selinux_selinuxfs_6_12.patch" "$HOOK/hide_selinux_selinuxfs.patch"
+        apply_first_of "$REQ_ATTR" "$HOOK/hide_selinux_attr_6_12.patch" "$HOOK/hide_selinux_attr.patch"
+        # Not version-keyed on purpose: quiet_selinux_audit{,_legacy} differ only
+        # in the security_sid_to_context() signature (the selinux_state argument
+        # dropped in 6.0). Both install the identical guard, so picking the wrong
+        # one is a compile error, never a silent loss of coverage.
+        apply_first_of - "$HOOK/quiet_selinux_audit.patch" "$HOOK/quiet_selinux_audit_legacy.patch"
         apply_or_die "$HOOK/quiet_selinux_audit_user.patch"
         cd "$KSU_FOLDER"
         apply_or_die "$HOOK/fix_selinux_seqno.patch"
