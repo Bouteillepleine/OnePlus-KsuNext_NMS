@@ -938,16 +938,19 @@ runs:
         echo "::endgroup::"
 
     - name: Apply SELinux Oracle Patches
+      if: ${{ env.OP_NMS == 'true' }}
       shell: bash
       run: |
         bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" hook
 
     - name: Apply pathhide maps/fd cloak
+      if: ${{ env.OP_NMS == 'true' }}
       shell: bash
       run: |
         bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" pathhide
 
     - name: Apply _ghost existence-oracle cloak
+      if: ${{ env.OP_NMS == 'true' }}
       shell: bash
       run: |
         bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" ghost
