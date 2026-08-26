@@ -151,3 +151,12 @@ Any and all donations are appreciated!
 - **[WildKernels/OnePlus_KernelSU_SUSFS](https://github.com/WildKernels/OnePlus_KernelSU_SUSFS)** — the excellent OnePlus build framework this is forked from
 - **OnePlusOSS** — kernel source
 - Community testers and contributors
+---
+
+## 📄 License
+
+[GPL-2.0](LICENSE) — the same license as the Linux kernel this builds.
+
+Kernel source comes from **OnePlusOSS** (GPL-2.0); the build framework is forked from
+**[WildKernels/OnePlus_KernelSU_SUSFS](https://github.com/WildKernels/OnePlus_KernelSU_SUSFS)**.
+The **NoMount Suite** add-on is a separate project — see [maxsteeel/nomount](https://github.com/maxsteeel/nomount) for its own license.
