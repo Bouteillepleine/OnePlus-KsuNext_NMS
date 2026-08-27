@@ -45,7 +45,24 @@ Most hiding solutions **mount** something — an `overlayfs` or bind mount — t
 - 🚫 **No overlay / bind mounts** — there's nothing in the mount table to find.
 - 🎯 **Per-app, per-file** — redirect only the files you choose, only for the UIDs you choose.
 - 🧼 **No mount-hiding cat-and-mouse** — you can't be caught hiding a mount that never existed.
-- 🖥️ **WebUI-driven** — injection rules, per-app hiding, `vbmeta` spoofing, and health checks, all from your manager.
+- 🖥️ **WebUI-driven** — injection rules, per-app hiding and health checks, all from your manager.
+
+<table>
+  <tr>
+    <td align="center"><a href="https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/blob/main/docs/screenshots/status.jpg"><img src="https://raw.githubusercontent.com/Bouteillepleine/OnePlus-KsuNext_NMS/main/docs/screenshots/status.jpg" width="185" alt="Status"></a></td>
+    <td align="center"><a href="https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/blob/main/docs/screenshots/modules.jpg"><img src="https://raw.githubusercontent.com/Bouteillepleine/OnePlus-KsuNext_NMS/main/docs/screenshots/modules.jpg" width="185" alt="Modules"></a></td>
+    <td align="center"><a href="https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/blob/main/docs/screenshots/rules.jpg"><img src="https://raw.githubusercontent.com/Bouteillepleine/OnePlus-KsuNext_NMS/main/docs/screenshots/rules.jpg" width="185" alt="Rules"></a></td>
+    <td align="center"><a href="https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/blob/main/docs/screenshots/check.jpg"><img src="https://raw.githubusercontent.com/Bouteillepleine/OnePlus-KsuNext_NMS/main/docs/screenshots/check.jpg" width="185" alt="Check"></a></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Status</b><br>zero mounts, live counts</sub></td>
+    <td align="center"><sub><b>Modules</b><br>what is served, and how</sub></td>
+    <td align="center"><sub><b>Rules</b><br>per-module rule breakdown</sub></td>
+    <td align="center"><sub><b>Check</b><br>one diagnostic, plain verdicts</sub></td>
+  </tr>
+</table>
+
+<sub>Tap a screenshot for the full-size view.</sub>
 
 ---
 
