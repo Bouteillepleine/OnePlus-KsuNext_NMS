@@ -46,6 +46,11 @@ inputs:
     required: false
     type: string
     default: hookless
+  patches_ref:
+    description: 'kernel_patches branch/ref to source the _ghost/_hook/_pathhide cloaks and the apply script from (default main; set a test branch to validate before merge)'
+    required: false
+    type: string
+    default: main
   github_token:
     description: 'GitHub Token'
     required: true
@@ -801,7 +806,9 @@ runs:
         }
         
         retry_clone "https://github.com/WildKernels/kernel_patches.git" "main" "1"
-        retry_clone "https://github.com/Bouteillepleine/kernel_patches.git" "main" "1" "bouton_kernel_patches"
+        _pref="${{ inputs.patches_ref }}"
+        retry_clone "https://github.com/Bouteillepleine/kernel_patches.git" "${_pref:-main}" "1" "bouton_kernel_patches"
+        echo "kernel_patches ref: ${_pref:-main}"
 
         echo "BOUTEILLE_KERNEL_PATCHES_FOLDER=$GITHUB_WORKSPACE/bouton_kernel_patches" >> "$GITHUB_ENV"
         echo "BOUTEILLE_BBR3_PATCHES_FOLDER=$GITHUB_WORKSPACE/bouton_kernel_patches/common/bbrv3" >> "$GITHUB_ENV"
