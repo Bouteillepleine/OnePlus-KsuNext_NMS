@@ -49,10 +49,10 @@ Most hiding solutions **mount** something — an `overlayfs` or bind mount — t
 
 <table>
   <tr>
-    <td align="center"><a href="https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/blob/main/docs/screenshots/status.jpg"><img src="https://raw.githubusercontent.com/Bouteillepleine/OnePlus-KsuNext_NMS/main/docs/screenshots/status.jpg" width="185" alt="Status"></a></td>
-    <td align="center"><a href="https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/blob/main/docs/screenshots/modules.jpg"><img src="https://raw.githubusercontent.com/Bouteillepleine/OnePlus-KsuNext_NMS/main/docs/screenshots/modules.jpg" width="185" alt="Modules"></a></td>
-    <td align="center"><a href="https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/blob/main/docs/screenshots/rules.jpg"><img src="https://raw.githubusercontent.com/Bouteillepleine/OnePlus-KsuNext_NMS/main/docs/screenshots/rules.jpg" width="185" alt="Rules"></a></td>
-    <td align="center"><a href="https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/blob/main/docs/screenshots/check.jpg"><img src="https://raw.githubusercontent.com/Bouteillepleine/OnePlus-KsuNext_NMS/main/docs/screenshots/check.jpg" width="185" alt="Check"></a></td>
+    <td align="center"><a href="https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/blob/NoMount/docs/screenshots/status.jpg"><img src="https://raw.githubusercontent.com/Bouteillepleine/OnePlus-KsuNext_NMS/NoMount/docs/screenshots/status.jpg" width="185" alt="Status"></a></td>
+    <td align="center"><a href="https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/blob/NoMount/docs/screenshots/modules.jpg"><img src="https://raw.githubusercontent.com/Bouteillepleine/OnePlus-KsuNext_NMS/NoMount/docs/screenshots/modules.jpg" width="185" alt="Modules"></a></td>
+    <td align="center"><a href="https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/blob/NoMount/docs/screenshots/rules.jpg"><img src="https://raw.githubusercontent.com/Bouteillepleine/OnePlus-KsuNext_NMS/NoMount/docs/screenshots/rules.jpg" width="185" alt="Rules"></a></td>
+    <td align="center"><a href="https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/blob/NoMount/docs/screenshots/check.jpg"><img src="https://raw.githubusercontent.com/Bouteillepleine/OnePlus-KsuNext_NMS/NoMount/docs/screenshots/check.jpg" width="185" alt="Check"></a></td>
   </tr>
   <tr>
     <td align="center"><sub><b>Status</b><br>zero mounts, live counts</sub></td>
