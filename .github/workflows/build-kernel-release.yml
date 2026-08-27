@@ -51,6 +51,10 @@ on:
         type: choice
         options: [O2, O3]
         default: O2
+      build_timestamp:
+        description: 'Custom kernel build timestamp for uname -a (e.g. "Fri Dec 5 02:05:55 UTC 2025"). Leave empty for current time.'
+        type: string
+        default: ''
       clean_build:
         description: 'Clean build (no ccache)'
         type: boolean
@@ -80,10 +84,6 @@ on:
         required: false
         type: boolean
         default: false
-      build_timestamp:
-        description: 'Custom kernel build timestamp for uname -a (e.g. "Fri Dec 5 02:05:55 UTC 2025"). Leave empty for current time.'
-        type: string
-        default: ''
 
 jobs:
   set-op-model:
