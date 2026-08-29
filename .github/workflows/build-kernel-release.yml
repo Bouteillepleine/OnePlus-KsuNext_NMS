@@ -349,7 +349,7 @@ jobs:
             echo "| 🧰 ADIOS · Debug artifacts | ${{ inputs.enable_adios && '✅' || '❌' }} · ${{ inputs.debug && '✅' || '❌' }} |"
             echo ""
             echo ""
-            echo "**NoMount (hookless)** — \`maxsteeel/nomount\`, version \`${{ steps.set-matrix.outputs.nomount_version }}\`"
+            echo "**NoMount (hookless)** — \`Bouteillepleine/NoMount-Suite\`, version \`${{ steps.set-matrix.outputs.nomount_version }}\`"
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
           
@@ -1042,7 +1042,7 @@ jobs:
           
           | Component | Source |
           |-----------|--------|
-          | NoMount (hookless) | [\`maxsteeel/nomount\`](https://github.com/maxsteeel/nomount) |
+          | NoMount (hookless) | [\`Bouteillepleine/NoMount-Suite\`](https://github.com/Bouteillepleine/NoMount-Suite) |
           
           ---
           
@@ -1117,7 +1117,7 @@ jobs:
           
           ## 🙏 Credits
           
-          **KernelSU Next Team**, **NoMount** (maxsteeel & Contributors), **WildKernels**, **OnePlus** (kernel source), and community testers.
+          **KernelSU Next Team**, **NoMount** (Bouteillepleine & Contributors, on maxsteeel's original), **WildKernels**, **OnePlus** (kernel source), and community testers.
           
           EOF
           
