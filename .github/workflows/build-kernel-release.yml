@@ -75,10 +75,10 @@ on:
         type: boolean
         default: false
       nomount_ref:
-        description: 'nomount branch/ref for the Prism engine src + patches (default suite; set e.g. test/sprivate to validate a branch before merge). The engine lives in the Suite repo now, not kbuild@hookless.'
+        description: 'NoMount-Suite branch/ref for the Prism engine src + patches (default main; set a branch to validate it before it is released). The engine ships inside the Suite repo, under hookless/.'
         required: false
         type: string
-        default: suite
+        default: main
       patches_ref:
         description: 'kernel_patches branch/ref for the _ghost/_hook/_pathhide cloaks and the apply script (default main; set a branch to validate before merge)'
         required: false
@@ -264,7 +264,7 @@ jobs:
           active_gki_keys_csv=$(IFS=','; echo "${active_keys[*]:-}")
           echo "active_gki_keys=$active_gki_keys_csv" >> "$GITHUB_OUTPUT"
 
-          NM_HDR_URL="https://raw.githubusercontent.com/Bouteillepleine/nomount/suite/hookless/src/nomount.h"
+          NM_HDR_URL="https://raw.githubusercontent.com/Bouteillepleine/NoMount-Suite/main/hookless/src/nomount.h"
           nomount_version="unknown"
 
           for attempt in 1 2 3; do
@@ -285,7 +285,7 @@ jobs:
           echo "  ✅ NoMount version: $nomount_version"
 
           if [ "${{ inputs.make_release }}" = "true" ] && [ "$nomount_version" = "unknown" ]; then
-            echo "::error::Could not read NM_MODULE_VERSION from nomount@suite. Cannot proceed with release."
+            echo "::error::Could not read NM_MODULE_VERSION from NoMount-Suite@main. Cannot proceed with release."
             exit 1
           fi
 
