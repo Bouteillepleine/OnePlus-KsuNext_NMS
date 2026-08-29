@@ -42,10 +42,10 @@ inputs:
     type: boolean
     default: false
   nomount_ref:
-    description: 'kbuild branch/ref to source the hookless NoMount src + patches from (default hookless; set a test branch to validate before merge)'
+    description: 'nomount branch/ref to source the Prism engine src + patches from (default suite; set a test branch to validate before merge). The engine lives in the Suite repo now, not kbuild@hookless.'
     required: false
     type: string
-    default: hookless
+    default: suite
   patches_ref:
     description: 'kernel_patches branch/ref to source the _ghost/_hook/_pathhide cloaks and the apply script from (default main; set a test branch to validate before merge)'
     required: false
