@@ -875,12 +875,12 @@ jobs:
           
           
           
-          MOD_REPO="Bouteillepleine/nomount"
+          MOD_REPO="Bouteillepleine/NoMount-Suite"
           MOD_JSON=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/${MOD_REPO}/releases/latest" 2>/dev/null || true)
           MOD_ASSET=$(printf '%s' "$MOD_JSON" | grep -oE '"name": *"00_NoMount-Module-[^"]+\.zip"' | head -1 | sed 's/.*"\(00_NoMount[^"]*\)"/\1/')
           MOD_URL=$(printf '%s' "$MOD_JSON" | grep -oE '"browser_download_url": *"[^"]*/00_NoMount-Module-[^"]+\.zip"' | head -1 | sed 's/.*: *"//; s/"$//')
           if [ -z "$MOD_ASSET" ]; then
-            MOD_VER=$(curl -fsSL "https://raw.githubusercontent.com/${MOD_REPO}/suite/module/module.prop" 2>/dev/null | awk -F= '/^version=/{print $2}')
+            MOD_VER=$(curl -fsSL "https://raw.githubusercontent.com/${MOD_REPO}/main/module/module.prop" 2>/dev/null | awk -F= '/^version=/{print $2}')
             MOD_VER="${MOD_VER:-v1.0.5}"
             MOD_ASSET="00_NoMount-Module-${MOD_VER}.zip"
           fi
