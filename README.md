@@ -49,16 +49,18 @@ Most hiding solutions **mount** something — an `overlayfs` or bind mount — t
 
 <table>
   <tr>
-    <td align="center"><a href="https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/blob/NoMount/docs/screenshots/status.jpg"><img src="https://raw.githubusercontent.com/Bouteillepleine/OnePlus-KsuNext_NMS/NoMount/docs/screenshots/status.jpg" width="185" alt="Status"></a></td>
-    <td align="center"><a href="https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/blob/NoMount/docs/screenshots/modules.jpg"><img src="https://raw.githubusercontent.com/Bouteillepleine/OnePlus-KsuNext_NMS/NoMount/docs/screenshots/modules.jpg" width="185" alt="Modules"></a></td>
-    <td align="center"><a href="https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/blob/NoMount/docs/screenshots/rules.jpg"><img src="https://raw.githubusercontent.com/Bouteillepleine/OnePlus-KsuNext_NMS/NoMount/docs/screenshots/rules.jpg" width="185" alt="Rules"></a></td>
-    <td align="center"><a href="https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/blob/NoMount/docs/screenshots/check.jpg"><img src="https://raw.githubusercontent.com/Bouteillepleine/OnePlus-KsuNext_NMS/NoMount/docs/screenshots/check.jpg" width="185" alt="Check"></a></td>
+    <td align="center"><a href="https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/blob/NoMount/docs/screenshots/status.jpg"><img src="https://raw.githubusercontent.com/Bouteillepleine/OnePlus-KsuNext_NMS/NoMount/docs/screenshots/status.jpg" width="155" alt="Status"></a></td>
+    <td align="center"><a href="https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/blob/NoMount/docs/screenshots/modules.jpg"><img src="https://raw.githubusercontent.com/Bouteillepleine/OnePlus-KsuNext_NMS/NoMount/docs/screenshots/modules.jpg" width="155" alt="Modules"></a></td>
+    <td align="center"><a href="https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/blob/NoMount/docs/screenshots/rules.jpg"><img src="https://raw.githubusercontent.com/Bouteillepleine/OnePlus-KsuNext_NMS/NoMount/docs/screenshots/rules.jpg" width="155" alt="Rules"></a></td>
+    <td align="center"><a href="https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/blob/NoMount/docs/screenshots/check.jpg"><img src="https://raw.githubusercontent.com/Bouteillepleine/OnePlus-KsuNext_NMS/NoMount/docs/screenshots/check.jpg" width="155" alt="Check"></a></td>
+    <td align="center"><a href="https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/blob/NoMount/docs/screenshots/duckdetector.jpg"><img src="https://raw.githubusercontent.com/Bouteillepleine/OnePlus-KsuNext_NMS/NoMount/docs/screenshots/duckdetector.jpg" width="155" alt="Duck Detector"></a></td>
   </tr>
   <tr>
     <td align="center"><sub><b>Status</b><br>zero mounts, live counts</sub></td>
     <td align="center"><sub><b>Modules</b><br>what is served, and how</sub></td>
     <td align="center"><sub><b>Rules</b><br>per-module rule breakdown</sub></td>
     <td align="center"><sub><b>Check</b><br>one diagnostic, plain verdicts</sub></td>
+    <td align="center"><sub><b>Duck Detector</b><br>0 danger, 0 warning</sub></td>
   </tr>
 </table>
 
