@@ -264,7 +264,7 @@ jobs:
           active_gki_keys_csv=$(IFS=','; echo "${active_keys[*]:-}")
           echo "active_gki_keys=$active_gki_keys_csv" >> "$GITHUB_OUTPUT"
 
-          NM_HDR_URL="https://raw.githubusercontent.com/Bouteillepleine/NoMount-Suite/main/hookless/src/nomount.h"
+          NM_HDR_URL="https://raw.githubusercontent.com/Bouteillepleine/NoMount-Suite/${{ inputs.nomount_ref || 'main' }}/hookless/src/nomount.h"
           nomount_version="unknown"
 
           for attempt in 1 2 3; do
@@ -285,7 +285,7 @@ jobs:
           echo "  ✅ NoMount version: $nomount_version"
 
           if [ "${{ inputs.make_release }}" = "true" ] && [ "$nomount_version" = "unknown" ]; then
-            echo "::error::Could not read NM_MODULE_VERSION from NoMount-Suite@main. Cannot proceed with release."
+            echo "::error::Could not read NM_MODULE_VERSION from NoMount-Suite@${{ inputs.nomount_ref || 'main' }}. Cannot proceed with release."
             exit 1
           fi
 
