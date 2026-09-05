@@ -904,7 +904,7 @@ jobs:
           | | Download | Where it's from | How to install |
           |---|---|---|---|
           | 1️⃣ **Kernel** | \`AK3_<device>_…zip\` (pick yours below) | built by this repo's CI | Kernel Flasher / KernelSU Next Manager |
-          | 2️⃣ **NoMount Suite** | \`$MOD_ASSET\` | the separate [NoMount project](${{ github.server_url }}/${MOD_REPO}/releases/latest) — **not** an asset of this release | KernelSU Next Manager → Modules → Install from storage |
+          | 2️⃣ **NoMount Suite** | \`$MOD_ASSET\` | the separate [NoMount project](${{ github.server_url }}/${MOD_REPO}/releases/latest), mirrored into the Assets below so both downloads are on one page | KernelSU Next Manager → Modules → Install from storage |
 
           > The kernel has NoMount **compiled in but dormant** — the **NoMount Suite module activates it**. You need both.
 
@@ -915,7 +915,7 @@ jobs:
 
           Then: KernelSU Next Manager → **Modules → Install from storage** → select \`$MOD_ASSET\` → **reboot**.
 
-          > _This one is **not** in the Assets list below — the Assets here are kernel ZIPs built by this repo. The link above goes to the [NoMount project's own release](${{ github.server_url }}/${MOD_REPO}/releases/latest), so it always gives you the current Suite._
+          > _The copy in the Assets below is pinned to \`$MOD_VER\` and does not update itself. The [NoMount project's own release](${{ github.server_url }}/${MOD_REPO}/releases/latest) is always current, and once installed the Suite offers its own in-app update._
           > _One metamodule at a time: remove any existing metamodule and reboot before installing this one._
 
           ---
