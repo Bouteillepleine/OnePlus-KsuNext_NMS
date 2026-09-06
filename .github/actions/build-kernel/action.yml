@@ -1951,6 +1951,14 @@ runs:
         # struct ieee80211_ops layout does not match what these drivers expect
         "$CK/scripts/config" --file "$OUT/.config" --enable NETDEVICES --enable WLAN \
           --module CFG80211 --enable CFG80211_WEXT --module MAC80211 --enable MAC80211_LEDS
+        # cfg80211 first: with no vendor Module.symvers in this tree there is
+        # nothing for mac80211 to resolve its cfg80211 symbols against, and every
+        # subsequent build_sub fails. Building it here puts those symbols into
+        # $OUT/Module.symvers for the rest of the pass. We build it but do NOT
+        # ship it -- the device keeps its own cfg80211 (kiwi_v2 holds it), and
+        # both come from the same GKI 5.15.180 source, so the CRCs line up.
+        MK olddefconfig >/dev/null 2>&1; build_sub net/wireless cfg80211
+        rm -f "$MODZIP_DIR/cfg80211.ko"
         MK olddefconfig >/dev/null 2>&1; build_sub net/mac80211 mac80211
         "$CK/scripts/config" --file "$OUT/.config" \
           --enable WLAN_VENDOR_ATH --module ATH9K_HW --module ATH9K_COMMON --module ATH9K_HTC --module CARL9170
