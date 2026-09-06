@@ -1080,8 +1080,9 @@ jobs:
           ### Official Manager
           EOF
           cat << EOF >> release_notes.md
-          - **KernelSU Next Manager** *(install the version matching the kernel — see \`KernelSU Next Version\` in Build Configuration above)*
+          - **KernelSU Next Manager** *(match the kernel by COMMIT, not just version — see \`KernelSU Next Branch\` in Build Configuration above; the bundled APK's filename carries the same short sha)*
             → [GitHub Release](https://github.com/KernelSU-Next/KernelSU-Next/releases)
+          > ⚠️ **Do not let the manager update itself past this kernel.** The version number does not pin the uapi: a manager and a driver can both report the same version and still disagree, which the manager reports as *"Manager uapi version (N) and driver uapi version (M) mismatch"* and root management stops working. Install the APK from **this** release's Assets, and reflash a matching kernel before taking a newer one.
           EOF
           cat << EOF >> release_notes.md
           ### Recommended Flasher
