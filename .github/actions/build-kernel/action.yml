@@ -1360,15 +1360,42 @@ runs:
         CONFIG_RUST=y
         EOF
 
-    - name: Add Nethunter configs (EmberHeart)
+    - name: Add Nethunter wireless drivers (EmberHeart)
       shell: bash
       if: ${{ env.OP_NETHUNTER == 'true' }}
       run: |
         set -euo pipefail
-        echo "::group::Apply Nethunter defconfig fragment"
-        cat "${{ github.action_path }}/nethunter/nethunter.gki.fragment" \
-          >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
-        echo "Nethunter configs applied ✅ (olddefconfig will prune unsupported symbols)"
+        echo "::group::Nethunter wireless drivers"
+        # Build the drivers IN-TREE so they and mac80211 come from one tree and
+        # therefore agree on CRCs. The OP15 builder instead links modules
+        # against the DEVICE's cfg80211/mac80211, which works until the vendor
+        # mac80211 turns out to have a different struct ieee80211_ops layout --
+        # that is exactly what stopped rtw88 on OP15 (probe got NULL callbacks
+        # and failed with -ENOMEM). In-tree avoids the whole class of problem.
+        cd "$COMMON_KERNEL_FOLDER/drivers/net/wireless/realtek"
+        rm -rf rtw88
+        git clone --depth 1 https://github.com/lwfinger/rtw88.git
+        # lwfinger's tree brings its own Kconfig/Makefile: drop the in-tree
+        # source line and force the directory to build as modules.
+        sed -i 's/$(CONFIG_RTW88)/m/g' Makefile
+        grep -v 'rtw88/Kconfig' Kconfig > Kconfig.nh && mv Kconfig.nh Kconfig
+        cd "$COMMON_KERNEL_FOLDER"
+        ./scripts/config --file arch/arm64/configs/gki_defconfig \
+          --enable CONFIG_NETDEVICES --enable CONFIG_WLAN \
+          --module CONFIG_CFG80211 --enable CONFIG_CFG80211_WEXT \
+          --module CONFIG_MAC80211 --enable CONFIG_MAC80211_LEDS \
+          --enable CONFIG_WLAN_VENDOR_ATH --module CONFIG_ATH9K_HW \
+          --module CONFIG_ATH9K_COMMON --module CONFIG_ATH9K_HTC \
+          --module CONFIG_CARL9170 \
+          --enable CONFIG_WLAN_VENDOR_MEDIATEK --module CONFIG_MT7601U \
+          --module CONFIG_MT76_CORE --module CONFIG_MT76_USB \
+          --module CONFIG_MT7921U --module CONFIG_MT7921_COMMON \
+          --enable CONFIG_WLAN_VENDOR_RALINK --module CONFIG_RT2X00 \
+          --module CONFIG_RT2800USB \
+          --enable CONFIG_WLAN_VENDOR_REALTEK
+        # scripts/config uppercases symbol names, but these carry a lowercase x
+        printf 'CONFIG_MT76x02_LIB=m\nCONFIG_MT76x02_USB=m\nCONFIG_MT76x2_COMMON=m\nCONFIG_MT76x2U=m\n' >> arch/arm64/configs/gki_defconfig
+        echo "wireless drivers enabled and rtw88 replaced with lwfinger/rtw88"
         echo "::endgroup::"
 
 
@@ -1745,7 +1772,13 @@ runs:
           
           ls -la "$DEBUG_ARTIFACTS_FOLDER"
         else
-          make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" -j"$(nproc --all)" O="$OUT" KCFLAGS="$KCFLAGS" KCPPFLAGS="$KCPPFLAGS" Image 2>&1 | tee build.log
+          # Nethunter needs the Wi-Fi drivers as modules. Build them in the SAME
+          # invocation as the Image so they carry the same KCFLAGS and therefore
+          # the same genksyms CRCs -- a separate 'make modules' pass afterwards
+          # reshifts them and yields .ko that build fine but refuse to load.
+          TARGETS="Image"
+          [ "${OP_NETHUNTER:-false}" = "true" ] && TARGETS="Image modules"
+          make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" -j"$(nproc --all)" O="$OUT" KCFLAGS="$KCFLAGS" KCPPFLAGS="$KCPPFLAGS" $TARGETS 2>&1 | tee build.log
         fi
         
         BUILD_END=$(date +%s)
@@ -1901,83 +1934,32 @@ runs:
         echo "   - Build time: ${BUILD_TIME}s"
         echo "::endgroup::"
 
-    - name: Build Nethunter injection modules (EmberHeart)
+    - name: Collect Nethunter Wi-Fi modules (EmberHeart)
       shell: bash
       if: ${{ env.OP_NETHUNTER == 'true' }}
       run: |
         set -euo pipefail
-        echo "::group::Build Nethunter Wi-Fi injection modules"
+        echo "::group::Collect Wi-Fi modules"
         OUT="$COMMON_KERNEL_FOLDER/out"
-        # Re-establish the same LLVM toolchain env the kernel build used
-        # (those exports were shell-local to the build step); clang is on PATH.
-        export LLVM=1 LLVM_IAS=1 ARCH=arm64 SUBARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
-        export LD=ld.lld HOSTLD=ld.lld AR=llvm-ar NM=llvm-nm \
-               OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
-        export CC=clang HOSTCC=clang
-        # NOTE: do NOT run 'make modules' here — the main build step already built
-        # Image+modules together (with KCFLAGS/KCPPFLAGS), so $OUT/Module.symvers already
-        # carries the correct KMI CRCs (module_layout=0xe976b219). Re-running modules
-        # without those flags reshifts genksyms and produces unloadable .ko (0xde6485ed).
-        # cfg80211 is NOT built here (bootloops OP15); its DEVICE CRCs come via EXTRA_SYMVERS.
-        KERNEL_SRC="$OUT" \
-        OUT_DIR="$AK3_FOLDER/modules" \
-        KMAKE="LLVM=1 LLVM_IAS=1 LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy STRIP=llvm-strip" \
-        EXTRA_SYMVERS="${{ github.action_path }}/nethunter/device_wifi.symvers" \
-        DRIVERS="https://github.com/aircrack-ng/rtl8812au.git@734485506a30d6237c2deaad666a19f8ca5379f2 https://github.com/morrownr/8821au-20210708.git@3a7cdb591b64d99d2670e455bde67c8ab338525b https://github.com/morrownr/88x2bu-20210702.git@249ca9584e1bc807934401211f2ea0df5d733bcd" \
-        bash "${{ github.action_path }}/nethunter/build_nethunter_modules.sh"
-        # --- in-kernel Wi-Fi drivers as modules, linked to the DEVICE's cfg80211/mac80211
-        # CRCs (device_wifi.symvers). Only each subdir is built (M=); subsystems resolve
-        # from device_wifi.symvers, so the boot Image is never touched (no bootloop).
-        # Land alongside the out-of-tree RTL set in the AK3 modules dir (do.modules=0 →
-        # ignored on flash, but present in the zip for extraction into the KSU module).
-        MODZIP_DIR="$AK3_FOLDER/modules"; mkdir -p "$MODZIP_DIR"
-        cp "$OUT/Module.symvers" "$OUT/Module.symvers.kmi"
-        SV="${{ github.action_path }}/nethunter/device_wifi.symvers"
-        SIGH=$(sed -n 's/^CONFIG_MODULE_SIG_HASH="\(.*\)"/\1/p' "$OUT/.config"); SIGH=${SIGH:-sha256}
-        SIGK="$COMMON_KERNEL_FOLDER/$(sed -n 's/^CONFIG_MODULE_SIG_KEY="\(.*\)"/\1/p' "$OUT/.config")"
-        CK="$COMMON_KERNEL_FOLDER"
-        MK() { make LD="$CK/ld-wrapper" HOSTLD="$CK/ld-wrapper" -C "$CK" O="$OUT" "$@"; }
-        # device mac80211 lacks MAC80211_LEDS exports -> drop the select across wireless
-        for kc in $(grep -rl 'select MAC80211_LEDS' "$CK/drivers/net/wireless" 2>/dev/null); do sed -i '/select MAC80211_LEDS/d' "$kc"; done
-        build_sub() { # $1=subdir  $2=label
-          cp "$OUT/Module.symvers.kmi" "$OUT/Module.symvers" 2>/dev/null || true
-          MK prepare >/dev/null 2>&1 || true
-          if MK -j"$(nproc --all)" M="$CK/$1" modules KBUILD_EXTRA_SYMBOLS="$SV"; then
-            for ko in $(find "$CK/$1" -name '*.ko' 2>/dev/null); do
-              llvm-strip --strip-debug "$ko" 2>/dev/null || true
-              [ -f "$SIGK" ] && "$CK/scripts/sign-file" "$SIGH" "$SIGK" "${SIGK%.pem}.x509" "$ko" 2>/dev/null || true
-              cp "$ko" "$MODZIP_DIR/" && echo "   $2: $(basename "$ko")"
-            done
-          else echo "::warning::$2 modules build failed (non-fatal)"; fi
-        }
-        # ath9k_htc (AR9271) + carl9170 (AR9170)
-        "$CK/scripts/config" --file "$OUT/.config" --enable NETDEVICES --enable WLAN \
-          --module CFG80211 --enable CFG80211_WEXT --module MAC80211 --disable MAC80211_LEDS \
-          --enable WLAN_VENDOR_ATH --module ATH9K_HW --module ATH9K_COMMON --module ATH9K_HTC \
-          --module CARL9170
-        MK olddefconfig >/dev/null 2>&1; build_sub drivers/net/wireless/ath ath9k
-        # mt76 (MT7601U / MT7921U / MT76x2U / MT76 USB)
-        "$CK/scripts/config" --file "$OUT/.config" --enable WLAN_VENDOR_MEDIATEK \
-          --module MT7601U --module MT76_CORE --module MT76_USB --module MT7921U --module MT7921_COMMON
-        # MT76x2U & friends carry a lowercase 'x'; scripts/config uppercases the symbol
-        # (writes CONFIG_MT76X2U, which does not exist), so set the exact-case symbols
-        # directly. Deps (MAC80211/USB) are already satisfied by the ath9k step above.
-        printf 'CONFIG_MT76x02_LIB=m\nCONFIG_MT76x02_USB=m\nCONFIG_MT76x2_COMMON=m\nCONFIG_MT76x2U=m\n' >> "$OUT/.config"
-        MK olddefconfig >/dev/null 2>&1; build_sub drivers/net/wireless/mediatek mt76
-        # rt2x00 (Ralink RT2800USB: RT3070/RT3572/RT5370/RT5572 injection dongles)
-        "$CK/scripts/config" --file "$OUT/.config" --enable WLAN_VENDOR_RALINK \
-          --module RT2X00 --module RT2800USB \
-          --enable RT2800USB_RT33XX --enable RT2800USB_RT35XX --enable RT2800USB_RT3573 \
-          --enable RT2800USB_RT53XX --enable RT2800USB_RT55XX --enable RT2800USB_UNKNOWN
-        MK olddefconfig >/dev/null 2>&1; build_sub drivers/net/wireless/ralink/rt2x00 rt2x00
-        # rtw88 (8822bu / 8821cu / 8723du)
-        "$CK/scripts/config" --file "$OUT/.config" --enable WLAN_VENDOR_REALTEK --module RTW88 \
-          --module RTW88_CORE --module RTW88_USB --module RTW88_8822B --module RTW88_8822BU \
-          --module RTW88_8821C --module RTW88_8821CU --module RTW88_8723D --module RTW88_8723DU
-        MK olddefconfig >/dev/null 2>&1; build_sub drivers/net/wireless/realtek/rtw88 rtw88
-        echo "   in-kernel Wi-Fi drivers -> AK3/modules ($(ls -1 "$MODZIP_DIR" 2>/dev/null | wc -l) files total)"
+        DEST="$AK3_FOLDER/modules"
+        mkdir -p "$DEST"
+        cfg="$OUT/.config"
+        sig_hash="$(sed -n 's/^CONFIG_MODULE_SIG_HASH="\(.*\)"/\1/p' "$cfg")"; sig_hash="${sig_hash:-sha256}"
+        sig_key="$COMMON_KERNEL_FOLDER/$(sed -n 's/^CONFIG_MODULE_SIG_KEY="\(.*\)"/\1/p' "$cfg")"
+        n=0
+        for d in net/mac80211 net/wireless drivers/net/wireless; do
+          for ko in $(find "$OUT/$d" -name "*.ko" 2>/dev/null | sort); do
+            llvm-strip --strip-debug "$ko" 2>/dev/null || true
+            if [ -x "$COMMON_KERNEL_FOLDER/scripts/sign-file" ] && [ -f "$sig_key" ]; then
+              "$COMMON_KERNEL_FOLDER/scripts/sign-file" "$sig_hash" "$sig_key" "${sig_key%.pem}.x509" "$ko" 2>/dev/null || true
+            fi
+            cp "$ko" "$DEST/" && n=$((n+1))
+          done
+        done
+        echo "collected $n Wi-Fi modules -> $DEST"
+        ls -1 "$DEST" | head -40
+        if [ "$n" -eq 0 ]; then echo "::warning::no Wi-Fi modules collected"; fi
         echo "::endgroup::"
-
 
     - name: Create Kernel ZIP
       id: create_zip

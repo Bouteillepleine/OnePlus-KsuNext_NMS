@@ -1,8 +1,0 @@
-# EmberHeart / Nethunter fragment — INTENTIONALLY EMPTY (boot-safe).
-#
-# OP15's base kernel already provides USB gadget/HID + cfg80211/mac80211.
-# Every config we tried adding here reassigned or perturbed a base symbol and
-# bootlooped the device (RFKILL override, then the USB-gadget/netfilter block).
-# So we add NOTHING to the kernel: the injection .ko are shipped in the zip and
-# link against the DEVICE cfg80211 CRCs (device_wifi.symvers). Re-introduce
-# individual configs ONLY after confirming via pstore they don't break boot.

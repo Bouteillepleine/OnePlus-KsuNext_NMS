@@ -24,6 +24,7 @@
   "ip_set": true,
   "unicode": true,
   "ntsync": false,
+  "nethunter": true,
   "blacklist_modules": "",
   "uname": "8-o-01179-g15b0e605e4c2"
 }
