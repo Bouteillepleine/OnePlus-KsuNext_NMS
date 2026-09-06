@@ -711,18 +711,31 @@ jobs:
         run: |
           TAG_BASE="nm${NOMOUNT_VERSION}"
 
-          LATEST_MATCHING_TAG=$(gh api repos/$REPO_OWNER/$REPO_NAME/tags \
-            --jq "[.[] | select(.name | startswith(\"${TAG_BASE}-r\"))] \
-                  | sort_by(.name | split(\"-r\")[1] | tonumber) \
-                  | last | .name // empty")
-          
-          if [ -z "$LATEST_MATCHING_TAG" ]; then
-            NEW_TAG="${TAG_BASE}-r1"
-          else
-            NEW_TAG=$(echo "$LATEST_MATCHING_TAG" | awk -F'-r' '{printf "%s-r%d", $1, $2+1}')
-          fi
-          
-          echo "New tag: $NEW_TAG"
+          # Highest -rN already taken, across BOTH tag refs AND release tag_names
+          # (drafts included), paginated.
+          #
+          # Refs alone were not enough: a DRAFT release owns its tag_name before
+          # the ref exists, so a run reading only refs picked an N a draft already
+          # held and `gh release create` refused it -- measured 2026-09-06, run
+          # 34021057361, which failed with "HTTP 403: Resource not accessible by
+          # integration". That is GitHub's reply when the tag_name is taken, not a
+          # permissions problem: the token had Contents: write throughout.
+          #
+          # --paginate because both endpoints stop at 30 per page. At five tags
+          # that was academic; it stops being academic silently, on whichever
+          # release crosses the boundary.
+          #
+          # TAG_BASE is escaped for sed: it contains dots, and an unescaped
+          # `nm1.30.0` would also match `nm1X30Y0`.
+          TB_RE=$(printf '%s' "$TAG_BASE" | sed 's/[.[\*^$]/\\&/g')
+
+          LATEST_N=$( { gh api --paginate "repos/$REPO_OWNER/$REPO_NAME/tags"     --jq '.[].name'
+                        gh api --paginate "repos/$REPO_OWNER/$REPO_NAME/releases" --jq '.[].tag_name'
+                      } | sed -n "s/^${TB_RE}-r\([0-9][0-9]*\)$/\1/p" | sort -n | tail -1 )
+
+          NEW_TAG="${TAG_BASE}-r$(( ${LATEST_N:-0} + 1 ))"
+
+          echo "New tag: $NEW_TAG (highest existing suffix: ${LATEST_N:-none})"
           echo "NEW_TAG=${NEW_TAG}" >> $GITHUB_ENV
 
       - name: 📥 Download Artifacts
