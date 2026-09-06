@@ -1,0 +1,27 @@
+diff --git a/os_dep/linux/ioctl_linux.c b/os_dep/linux/ioctl_linux.c
+--- a/os_dep/linux/ioctl_linux.c
++++ b/os_dep/linux/ioctl_linux.c
+@@ -1357,6 +1357,23 @@
+ 		goto exit;
+ 	}
+ 
++	/* Already in the requested mode? Do nothing.
++	 *
++	 * Reconfiguring monitor mode on a live interface panics the kernel on
++	 * 6.12 (softirq/RX tasklet race; FST_FRAME=tasklet_action_common).
++	 * aircrack-ng's osdep -- used by mdk4, airodump and friends -- issues
++	 * SIOCSIWMODE unconditionally during setup, even when the caller has
++	 * already put the interface into monitor mode via nl80211 while it was
++	 * down (which is the safe path). Making the redundant request a no-op
++	 * keeps those tools working without ever performing a live mode change.
++	 */
++	if (wrqu->mode == IW_MODE_MONITOR
++	    && dev->type == ARPHRD_IEEE80211_RADIOTAP) {
++		RTW_INFO("set_mode: already IW_MODE_MONITOR, no-op\n");
++		ret = 0;
++		goto exit;
++	}
++
+ 	/* initial default type */
+ 	dev->type = ARPHRD_ETHER;
+ 

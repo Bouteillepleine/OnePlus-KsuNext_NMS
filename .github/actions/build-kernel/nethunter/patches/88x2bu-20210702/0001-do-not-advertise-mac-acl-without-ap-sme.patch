@@ -1,0 +1,17 @@
+diff --git a/os_dep/linux/ioctl_cfg80211.c b/os_dep/linux/ioctl_cfg80211.c
+index e0cb7e9..07f032e 100644
+--- a/os_dep/linux/ioctl_cfg80211.c
++++ b/os_dep/linux/ioctl_cfg80211.c
+@@ -10200,7 +10200,11 @@ static int rtw_cfg80211_init_wiphy(_adapter *adapter, struct wiphy *wiphy)
+ 	wiphy->max_num_pmkids = RTW_MAX_NUM_PMKIDS;
+ 
+ #if CONFIG_RTW_MACADDR_ACL && (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 9, 0))
+-	wiphy->max_acl_mac_addrs = NUM_ACL;
++	/* Do not advertise MAC-ACL support. cfg80211 rejects a wiphy that sets
++	 * max_acl_mac_addrs without BOTH WIPHY_FLAG_HAVE_AP_SME and .set_mac_acl
++	 * (net/wireless/core.c). This driver does not satisfy that on 6.12, so
++	 * wiphy_register() returns -EINVAL, rtw_os_ndevs_register() bails and no
++	 * wlanN interface is ever created. MAC ACL only matters in AP mode. */
+ #endif
+ 
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 38)) || defined(COMPAT_KERNEL_RELEASE)
