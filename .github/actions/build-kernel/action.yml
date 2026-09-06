@@ -1968,6 +1968,34 @@ runs:
         MK olddefconfig >/dev/null 2>&1; build_sub net/mac80211 mac80211
         [ -f "$CK/net/mac80211/Module.symvers" ] && SV="$SV $CK/net/mac80211/Module.symvers"
         echo "symvers now: $SV"
+
+        # The device's cfg80211 is a different build from ours (its vermagic is
+        # 5.15.180-gef4e36add077), so our mac80211 will not load against it:
+        # 'disagrees about version of symbol cfg80211_rx_assoc_resp'. Shipping a
+        # coherent stack means our cfg80211 + mac80211 AND the QCA driver that
+        # holds cfg80211 - which is why EmberHeart ships qca_cld3_kiwi_v2.ko.
+        WLAN="$CK/../../vendor/qcom/opensource/wlan"
+        QDEV="${OP_QCACLD_DEV_NAME:-kiwi_v2}"
+        if [ -d "$WLAN/qcacld-3.0/.$QDEV" ]; then
+          echo "building the QCA wlan stack ($QDEV) against our cfg80211"
+          QMK="LLVM=1 LLVM_IAS=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KERNEL_SRC=$CK"
+          for wm in "$WLAN/platform" "$WLAN/qcacld-3.0/.$QDEV"; do
+            [ -d "$wm" ] || { echo "::warning::missing $wm"; continue; }
+            if make -C "$wm" M="$wm" -j"$(nproc --all)" $QMK O="$OUT" CHIPSET_COMPANY=QCOM OPLUS_VND_BUILD_PLATFORM="$OP_SOC" KBUILD_EXTRA_SYMBOLS="$SV" modules; then
+              [ -f "$wm/Module.symvers" ] && SV="$SV $wm/Module.symvers"
+              for ko in $(find "$wm" -name "*.ko" 2>/dev/null); do
+                llvm-strip --strip-debug "$ko" 2>/dev/null || true
+                [ -f "$SIGK" ] && "$CK/scripts/sign-file" "$SIGH" "$SIGK" "${SIGK%.pem}.x509" "$ko" 2>/dev/null || true
+                cp "$ko" "$MODZIP_DIR/" && echo "   qca: $(basename "$ko")"
+              done
+            else echo "::warning::QCA $wm failed (non-fatal)"; fi
+          done
+          # what ships as qca_cld3_<dev>.ko is a rename of the per-target module
+          [ -f "$MODZIP_DIR/$QDEV.ko" ] && mv "$MODZIP_DIR/$QDEV.ko" "$MODZIP_DIR/qca_cld3_$QDEV.ko"
+          echo "symvers now: $SV"
+        else
+          echo "::warning::no $WLAN/qcacld-3.0/.$QDEV - skipping the QCA stack"
+        fi
         "$CK/scripts/config" --file "$OUT/.config" \
           --enable WLAN_VENDOR_ATH --module ATH9K_HW --module ATH9K_COMMON --module ATH9K_HTC --module CARL9170
         MK olddefconfig >/dev/null 2>&1; build_sub drivers/net/wireless/ath ath9k
