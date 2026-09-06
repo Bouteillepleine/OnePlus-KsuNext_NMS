@@ -1737,7 +1737,13 @@ runs:
           # invocation as the Image so they carry the same KCFLAGS and therefore
           # the same genksyms CRCs -- a separate 'make modules' pass afterwards
           # reshifts them and yields .ko that build fine but refuse to load.
-          make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" -j"$(nproc --all)" O="$OUT" KCFLAGS="$KCFLAGS" KCPPFLAGS="$KCPPFLAGS" Image 2>&1 | tee build.log
+          # Nethunter needs $OUT/Module.symvers (the KMI CRCs) to link its Wi-Fi
+          # modules against later. That file comes from the modules/modpost pass,
+          # so ask for 'modules' too -- with the STOCK config, which leaves the
+          # Image itself untouched. The wireless symbols are only added afterwards.
+          NH_TARGETS="Image"
+          [ "${OP_NETHUNTER:-false}" = "true" ] && NH_TARGETS="Image modules"
+          make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" -j"$(nproc --all)" O="$OUT" KCFLAGS="$KCFLAGS" KCPPFLAGS="$KCPPFLAGS" $NH_TARGETS 2>&1 | tee build.log
         fi
         
         BUILD_END=$(date +%s)
@@ -1911,7 +1917,12 @@ runs:
         export LD=ld.lld HOSTLD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
         export CC=clang HOSTCC=clang
         MODZIP_DIR="$AK3_FOLDER/modules"; mkdir -p "$MODZIP_DIR"
-        cp "$OUT/Module.symvers" "$OUT/Module.symvers.kmi"
+        if [ -f "$OUT/Module.symvers" ]; then
+          cp "$OUT/Module.symvers" "$OUT/Module.symvers.kmi"
+        else
+          echo "::warning::no $OUT/Module.symvers - modules will link without KMI CRCs"
+          : > "$OUT/Module.symvers.kmi"
+        fi
         # We ship mac80211 but NOT cfg80211 (the device keeps its own, as
         # EmberHeart does); resolve cfg80211 symbols from the vendor tree.
         SV="$(find "$CK/.." -maxdepth 4 -name Module.symvers -path "*vendor*" 2>/dev/null | head -1)"
