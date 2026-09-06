@@ -1959,7 +1959,15 @@ runs:
         # both come from the same GKI 5.15.180 source, so the CRCs line up.
         MK olddefconfig >/dev/null 2>&1; build_sub net/wireless cfg80211
         rm -f "$MODZIP_DIR/cfg80211.ko"
+        # build_sub restores the pristine KMI Module.symvers on every call, which
+        # throws away what the previous subdir exported. Carry the symbols
+        # forward explicitly or mac80211 cannot see cfg80211, and the drivers
+        # cannot see mac80211.
+        [ -f "$CK/net/wireless/Module.symvers" ] && SV="$CK/net/wireless/Module.symvers"
+        echo "symvers now: $SV"
         MK olddefconfig >/dev/null 2>&1; build_sub net/mac80211 mac80211
+        [ -f "$CK/net/mac80211/Module.symvers" ] && SV="$SV $CK/net/mac80211/Module.symvers"
+        echo "symvers now: $SV"
         "$CK/scripts/config" --file "$OUT/.config" \
           --enable WLAN_VENDOR_ATH --module ATH9K_HW --module ATH9K_COMMON --module ATH9K_HTC --module CARL9170
         MK olddefconfig >/dev/null 2>&1; build_sub drivers/net/wireless/ath ath9k
