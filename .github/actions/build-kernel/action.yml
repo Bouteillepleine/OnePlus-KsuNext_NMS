@@ -1949,17 +1949,17 @@ runs:
         cd "$CK"
         # our own mac80211: the vendor one is built from a different tree and its
         # struct ieee80211_ops layout does not match what these drivers expect
-        "$CK/scripts/config" --file "$OUT/.config" --enable NETDEVICES --enable WLAN " + B + "
+        "$CK/scripts/config" --file "$OUT/.config" --enable NETDEVICES --enable WLAN \
           --module CFG80211 --enable CFG80211_WEXT --module MAC80211 --enable MAC80211_LEDS
         MK olddefconfig >/dev/null 2>&1; build_sub net/mac80211 mac80211
-        "$CK/scripts/config" --file "$OUT/.config" " + B + "
+        "$CK/scripts/config" --file "$OUT/.config" \
           --enable WLAN_VENDOR_ATH --module ATH9K_HW --module ATH9K_COMMON --module ATH9K_HTC --module CARL9170
         MK olddefconfig >/dev/null 2>&1; build_sub drivers/net/wireless/ath ath9k
-        "$CK/scripts/config" --file "$OUT/.config" --enable WLAN_VENDOR_MEDIATEK " + B + "
+        "$CK/scripts/config" --file "$OUT/.config" --enable WLAN_VENDOR_MEDIATEK \
           --module MT7601U --module MT76_CORE --module MT76_USB --module MT7921U --module MT7921_COMMON
         printf 'CONFIG_MT76x02_LIB=m\nCONFIG_MT76x02_USB=m\nCONFIG_MT76x2_COMMON=m\nCONFIG_MT76x2U=m\n' >> "$OUT/.config"
         MK olddefconfig >/dev/null 2>&1; build_sub drivers/net/wireless/mediatek mt76
-        "$CK/scripts/config" --file "$OUT/.config" --enable WLAN_VENDOR_RALINK --module RT2X00 --module RT2800USB " + B + "
+        "$CK/scripts/config" --file "$OUT/.config" --enable WLAN_VENDOR_RALINK --module RT2X00 --module RT2800USB \
           --enable RT2800USB_RT33XX --enable RT2800USB_RT35XX --enable RT2800USB_RT3573 --enable RT2800USB_RT53XX --enable RT2800USB_RT55XX --enable RT2800USB_UNKNOWN
         MK olddefconfig >/dev/null 2>&1; build_sub drivers/net/wireless/ralink/rt2x00 rt2x00
         "$CK/scripts/config" --file "$OUT/.config" --enable WLAN_VENDOR_REALTEK
