@@ -444,6 +444,22 @@ jobs:
               sleep 15
             done
           }
+          # The runner image ships third-party apt sources (Chrome, Microsoft)
+          # that this build needs nothing from -- every package below is Ubuntu's.
+          # apt-get update fails HARD when any one of them serves an index its own
+          # Release file disagrees with, and that is not transient, so the retry
+          # above cannot clear it: on 2026-09-09 Google published a Chrome index
+          # with a "Hash Sum mismatch" and every one of the 69 device jobs in a
+          # release run died here, before ccache, before the kernel, before KSU.
+          # Match on the host, not the filename: the image uses both .list and
+          # deb822 .sources, and the names have changed before.
+          for _src in /etc/apt/sources.list.d/*; do
+            [ -f "$_src" ] || continue
+            if grep -qE 'dl\.google\.com|packages\.microsoft\.com' "$_src"; then
+              echo "  dropping third-party apt source: $(basename "$_src")"
+              sudo rm -f "$_src"
+            fi
+          done
           apt_try update -qq
           apt_try install -y --no-install-recommends \
             git curl ca-certificates build-essential clang lld flex bison \
