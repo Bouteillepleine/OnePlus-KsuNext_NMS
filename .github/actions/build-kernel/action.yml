@@ -913,6 +913,17 @@ runs:
         echo "✅ KernelSU Next added (commit: ${KSU_COMMIT_SHA:0:8})"
         echo "::endgroup::"
 
+    # KernelSU-Next 8b9d7a7a resolves the SELinux helpers through kallsyms and
+    # calls the raw address. Under legacy Clang CFI (< 6.1) that traps in
+    # cfi_check_fail during init -- a silent bootloop on every 5.10/5.15 device.
+    # Bisected on OP11: boots on 2482c569, bootloops on 8b9d7a7a, engine and
+    # kernel source held constant. No-op on a KernelSU-Next without the defect,
+    # and a no-op at runtime wherever CONFIG_CFI_CLANG is off.
+    - name: Fix KSU SELinux symbol calls under CFI
+      shell: bash
+      run: |
+        bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/fix_ksu_cfi_symbol_calls.sh"
+
     - name: Apply NoMount (hookless) Patch
       if: ${{ env.OP_NMS == 'true' }}
       shell: bash
