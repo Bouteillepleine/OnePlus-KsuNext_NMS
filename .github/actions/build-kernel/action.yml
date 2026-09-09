@@ -846,7 +846,7 @@ runs:
         echo "Downloading KernelSU Next setup script..."
         if ! curl --fail --location --proto '=https' --tlsv1.2 -LSs \
           --retry 5 --retry-delay 5 --retry-all-errors \
-          "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" \
+          "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/dev/kernel/setup.sh" \
           -o "$KSUN_SETUP_SCRIPT"; then
           echo "::error::Failed to download KernelSU Next setup.sh after retries"
           exit 1
