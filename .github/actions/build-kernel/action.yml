@@ -890,8 +890,12 @@ runs:
         fi
 
         if [ -f manager/apk_sign.c ]; then
-          ALT_SIZE="0x525"
-          ALT_HASH="ea67b53fa7d682a7ed752723d0b3cefa0abf996228882b995ac1904e58d9c987"
+          ALT_SIZE="0x326"
+          ALT_HASH="8e2fd3800c10ac3bace8a3ec09a9668a9faf41e42ff8ebf8235be7dac26ee35c"
+          if [ $((ALT_SIZE)) -gt 1024 ]; then
+            echo "::error::ALT_SIZE ${ALT_SIZE} exceeds the kernel CERT_MAX_LENGTH of 1024; use an RSA 2048 signing key"
+            exit 1
+          fi
           sed -i "s|return check_v2_signature(path, EXPECTED_MANAGER_SIZE, EXPECTED_MANAGER_HASH);|return check_v2_signature(path, EXPECTED_MANAGER_SIZE, EXPECTED_MANAGER_HASH) \|\| check_v2_signature(path, ${ALT_SIZE}, \"${ALT_HASH}\");|" manager/apk_sign.c
           if ! grep -q "${ALT_HASH}" manager/apk_sign.c; then
             echo "::error::Failed to patch manager/apk_sign.c for the secondary manager key"
