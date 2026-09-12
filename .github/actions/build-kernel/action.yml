@@ -1978,6 +1978,12 @@ runs:
             echo "# CONFIG_CFG80211_WEXT is not set"
             echo "CONFIG_NL80211_TESTMODE=y"; } > "$PIN"
         fi
+        # kalama_GKI.config claims CONFIG_NL80211_TESTMODE=y, but the cfg80211.ko the
+        # device actually ships does not export cfg80211_testmode_alloc_reply_skb, so
+        # it was built with it off. It is the only config guard inside struct
+        # cfg80211_ops, and getting it wrong moves exactly one CRC: wiphy_new_nm.
+        sed -i "/^CONFIG_NL80211_TESTMODE/d" "$PIN"
+        echo "# CONFIG_NL80211_TESTMODE is not set" >> "$PIN"
         cat "$PIN"
         # cfg80211 first: with no vendor Module.symvers in this tree there is
         # nothing for mac80211 to resolve its cfg80211 symbols against, and every
