@@ -1985,6 +1985,17 @@ runs:
         sed -i "/^CONFIG_NL80211_TESTMODE/d" "$PIN"
         echo "# CONFIG_NL80211_TESTMODE is not set" >> "$PIN"
         cat "$PIN"
+        # Config alone still leaves wiphy_new_nm off by one CRC: the cfg80211.ko the
+        # device runs was built from msm-kernel, whose cfg80211.h adds a tx_addr
+        # member to struct cfg80211_external_auth_params (CFG80211_EXTERNAL_AUTH_TA_
+        # SUPPORT). That changes struct cfg80211_ops, and wiphy_new_nm is the only
+        # export that takes one. Build against msm-kernel s header instead.
+        MSMH="$MSM_KERNEL_FOLDER/include/net/cfg80211.h"
+        if [ -f "$MSMH" ] && ! cmp -s "$MSMH" "$CK/include/net/cfg80211.h"; then
+          cp "$CK/include/net/cfg80211.h" "$CK/include/net/cfg80211.h.common"
+          cp "$MSMH" "$CK/include/net/cfg80211.h"
+          echo "cfg80211.h from msm-kernel ($(diff "$CK/include/net/cfg80211.h.common" "$MSMH" | grep -c "^[<>]") lines differ)"
+        fi
         # cfg80211 first: with no vendor Module.symvers in this tree there is
         # nothing for mac80211 to resolve its cfg80211 symbols against, and every
         # subsequent build_sub fails. Building it here puts those symbols into
