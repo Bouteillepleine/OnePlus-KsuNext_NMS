@@ -1996,30 +1996,38 @@ runs:
           cp "$MSMH" "$CK/include/net/cfg80211.h"
           echo "cfg80211.h from msm-kernel ($(diff "$CK/include/net/cfg80211.h.common" "$MSMH" | grep -c "^[<>]") lines differ)"
         fi
-        # cfg80211 first: with no vendor Module.symvers in this tree there is
-        # nothing for mac80211 to resolve its cfg80211 symbols against, and every
-        # subsequent build_sub fails. Building it here puts those symbols into
-        # $OUT/Module.symvers for the rest of the pass. We build it but do NOT
-        # ship it -- the device keeps its own cfg80211 (kiwi_v2 holds it), and the
-        # pin above is what makes the CRCs line up.
-        MK olddefconfig >/dev/null 2>&1; build_sub net/wireless cfg80211
-        rm -f "$MODZIP_DIR/cfg80211.ko"
-        # build_sub restores the pristine KMI Module.symvers on every call, which
-        # throws away what the previous subdir exported. Carry the symbols
-        # forward explicitly or mac80211 cannot see cfg80211, and the drivers
-        # cannot see mac80211.
-        [ -f "$CK/net/wireless/Module.symvers" ] && SV="$CK/net/wireless/Module.symvers"
-        echo "symvers now: $SV"
-        MK olddefconfig >/dev/null 2>&1; build_sub net/mac80211 mac80211
-        [ -f "$CK/net/mac80211/Module.symvers" ] && SV="$SV $CK/net/mac80211/Module.symvers"
+        # The drivers do not need our cfg80211 or our mac80211 - both headers are
+        # identical to the ones the device's modules were built from, so the ABI is
+        # the same and only genksyms disagrees. Where we have a recording of the
+        # device's own export CRCs, link the drivers straight against those: the
+        # stack stays stock and nothing has to be swapped at boot.
+        DEVSV="$GITHUB_ACTION_PATH/nethunter/${OP_MODEL}_device_wifi.symvers"
+        if [ -f "$DEVSV" ]; then
+          cp "$DEVSV" "$OUT/device_wifi.symvers"
+          SV="$OUT/device_wifi.symvers"
+          echo "linking against the device s own CRCs: $(wc -l < "$SV") symbols from $(basename "$DEVSV")"
+        else
+          # No recording for this model: build both ourselves and ship mac80211, which
+          # then has to be swapped in at boot for the drivers to resolve against it.
+          MK olddefconfig >/dev/null 2>&1; build_sub net/wireless cfg80211
+          rm -f "$MODZIP_DIR/cfg80211.ko"
+          # build_sub restores the pristine KMI Module.symvers on every call, which
+          # throws away what the previous subdir exported. Carry the symbols forward
+          # explicitly or mac80211 cannot see cfg80211, and the drivers cannot see
+          # mac80211.
+          [ -f "$CK/net/wireless/Module.symvers" ] && SV="$CK/net/wireless/Module.symvers"
+          MK olddefconfig >/dev/null 2>&1; build_sub net/mac80211 mac80211
+          [ -f "$CK/net/mac80211/Module.symvers" ] && SV="$SV $CK/net/mac80211/Module.symvers"
+        fi
         echo "symvers now: $SV"
 
-        # With the pin above, mac80211 drops in on the device's own cfg80211 and the
-        # QCA driver is not in the way. Build it anyway so the set stays coherent if
-        # we ever do have to replace cfg80211: kiwi_v2 is the module that holds it.
+        # cfg80211 is never replaced, so the QCA driver that holds it does not need
+        # rebuilding. qcacld also does not currently compile against the GKI common
+        # headers (core/hdd wants msm-kernel's cfg80211 API), so this is off unless
+        # OP_QCACLD_BUILD=true asks for it.
         WLAN="$CK/../../vendor/qcom/opensource/wlan"
         QDEV="${OP_QCACLD_DEV_NAME:-kiwi_v2}"
-        if [ -d "$WLAN/qcacld-3.0/.$QDEV" ]; then
+        if [ "${OP_QCACLD_BUILD:-false}" = "true" ] && [ -d "$WLAN/qcacld-3.0/.$QDEV" ]; then
           echo "building the QCA wlan stack ($QDEV) against our cfg80211"
           # cnss2 and icnss2 include soc/qcom/*.h and soc/oplus/*.h, which exist
           # only in msm-kernel. LINUXINCLUDE lists common first, so this fills
@@ -2046,7 +2054,7 @@ runs:
           [ -f "$MODZIP_DIR/$QDEV.ko" ] && mv "$MODZIP_DIR/$QDEV.ko" "$MODZIP_DIR/qca_cld3_$QDEV.ko"
           echo "symvers now: $SV"
         else
-          echo "::warning::no $WLAN/qcacld-3.0/.$QDEV - skipping the QCA stack"
+          echo "QCA stack not built (set OP_QCACLD_BUILD=true to try)"
         fi
         "$CK/scripts/config" --file "$OUT/.config" \
           --enable WLAN_VENDOR_ATH --module ATH9K_HW --module ATH9K_COMMON --module ATH9K_HTC --module CARL9170
