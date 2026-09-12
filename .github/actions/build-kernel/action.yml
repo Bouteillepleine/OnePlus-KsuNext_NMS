@@ -1954,11 +1954,7 @@ runs:
         # our own mac80211: the vendor one is built from a different tree and its
         # struct ieee80211_ops layout does not match what these drivers expect
         "$CK/scripts/config" --file "$OUT/.config" --enable NETDEVICES --enable WLAN \
-          --module CFG80211 --module MAC80211 --disable MAC80211_LEDS
-        # MAC80211_LEDS is the whole difference between the stock mac80211's 126
-        # exports and our 131: the five __ieee80211_*_led_* symbols. With it on,
-        # ath9k_htc, carl9170, mt76 and rtw_core reference symbols the device's
-        # mac80211 does not have, and modpost rejects them.
+          --module CFG80211 --module MAC80211 --enable MAC80211_LEDS
         # The device keeps its own cfg80211, so ours has to be built from the same
         # CONFIG_CFG80211_* values: they change the shape of struct wiphy and
         # struct wireless_dev, and with them the CRC of every symbol mac80211
@@ -2000,16 +1996,20 @@ runs:
           cp "$MSMH" "$CK/include/net/cfg80211.h"
           echo "cfg80211.h from msm-kernel ($(diff "$CK/include/net/cfg80211.h.common" "$MSMH" | grep -c "^[<>]") lines differ)"
         fi
-        # The drivers do not need our cfg80211 or our mac80211 - both headers are
-        # identical to the ones the device's modules were built from, so the ABI is
-        # the same and only genksyms disagrees. Where we have a recording of the
-        # device's own export CRCs, link the drivers straight against those: the
-        # stack stays stock and nothing has to be swapped at boot.
-        DEVSV="$GITHUB_ACTION_PATH/nethunter/${OP_MODEL}_device_wifi.symvers"
+        # cfg80211.h is identical to the header the device's cfg80211.ko was built
+        # from, so struct cfg80211_ops has the same layout and only genksyms
+        # disagrees about its hash. Where we have a recording of the device's own
+        # cfg80211 export CRCs, build mac80211 against those: it then loads on the
+        # stock cfg80211 instead of needing one of ours. ath9k force-selects
+        # MAC80211_LEDS, whose five symbols the stock mac80211 does not export, so
+        # our mac80211 still ships and still gets swapped in at boot.
+        DEVSV="$GITHUB_ACTION_PATH/nethunter/${OP_MODEL}_device_cfg80211.symvers"
         if [ -f "$DEVSV" ]; then
-          cp "$DEVSV" "$OUT/device_wifi.symvers"
-          SV="$OUT/device_wifi.symvers"
-          echo "linking against the device s own CRCs: $(wc -l < "$SV") symbols from $(basename "$DEVSV")"
+          cp "$DEVSV" "$OUT/device_cfg80211.symvers"
+          SV="$OUT/device_cfg80211.symvers"
+          echo "cfg80211 CRCs taken from the device: $(wc -l < "$SV") symbols"
+          MK olddefconfig >/dev/null 2>&1; build_sub net/mac80211 mac80211
+          [ -f "$CK/net/mac80211/Module.symvers" ] && SV="$SV $CK/net/mac80211/Module.symvers"
         else
           # No recording for this model: build both ourselves and ship mac80211, which
           # then has to be swapped in at boot for the drivers to resolve against it.
