@@ -1954,7 +1954,11 @@ runs:
         # our own mac80211: the vendor one is built from a different tree and its
         # struct ieee80211_ops layout does not match what these drivers expect
         "$CK/scripts/config" --file "$OUT/.config" --enable NETDEVICES --enable WLAN \
-          --module CFG80211 --module MAC80211 --enable MAC80211_LEDS
+          --module CFG80211 --module MAC80211 --disable MAC80211_LEDS
+        # MAC80211_LEDS is the whole difference between the stock mac80211's 126
+        # exports and our 131: the five __ieee80211_*_led_* symbols. With it on,
+        # ath9k_htc, carl9170, mt76 and rtw_core reference symbols the device's
+        # mac80211 does not have, and modpost rejects them.
         # The device keeps its own cfg80211, so ours has to be built from the same
         # CONFIG_CFG80211_* values: they change the shape of struct wiphy and
         # struct wireless_dev, and with them the CRC of every symbol mac80211
