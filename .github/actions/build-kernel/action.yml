@@ -1932,6 +1932,10 @@ runs:
         MK() { make LD="$CK/ld-wrapper" HOSTLD="$CK/ld-wrapper" -C "$CK" O="$OUT" "$@"; }
         build_sub() { # $1=subdir  $2=label
           cp "$OUT/Module.symvers.kmi" "$OUT/Module.symvers" 2>/dev/null || true
+          if [ -f "$OUT/.cfg80211.pin" ]; then
+            cat "$OUT/.cfg80211.pin" >> "$OUT/.config"
+            MK olddefconfig >/dev/null 2>&1 || true
+          fi
           MK prepare >/dev/null 2>&1 || true
           if MK -j"$(nproc --all)" M="$CK/$1" modules KBUILD_EXTRA_SYMBOLS="$SV"; then
             for ko in $(find "$CK/$1" -name "*.ko" 2>/dev/null); do
@@ -1950,13 +1954,37 @@ runs:
         # our own mac80211: the vendor one is built from a different tree and its
         # struct ieee80211_ops layout does not match what these drivers expect
         "$CK/scripts/config" --file "$OUT/.config" --enable NETDEVICES --enable WLAN \
-          --module CFG80211 --enable CFG80211_WEXT --module MAC80211 --enable MAC80211_LEDS
+          --module CFG80211 --module MAC80211 --enable MAC80211_LEDS
+        # The device keeps its own cfg80211, so ours has to be built from the same
+        # CONFIG_CFG80211_* values: they change the shape of struct wiphy and
+        # struct wireless_dev, and with them the CRC of every symbol mac80211
+        # imports. Measured on OP11: our mac80211 disagreed on 64 of 74 cfg80211
+        # symbols, EmberHeart's on none, because theirs merges the vendor fragment.
+        PIN="$OUT/.cfg80211.pin"
+        VFRAG="$MSM_KERNEL_FOLDER/arch/arm64/configs/vendor/${OP_SOC}_GKI.config"
+        if [ -f "$VFRAG" ] && grep -q "^CONFIG_CFG80211=" "$VFRAG"; then
+          grep -E "^(# )?CONFIG_(CFG80211|NL80211)" "$VFRAG" > "$PIN"
+          echo "cfg80211 config pinned from $VFRAG"
+        else
+          echo "::warning::no CFG80211 lines in $VFRAG - using the known kalama values"
+          { echo "CONFIG_CFG80211=m"
+            echo "# CONFIG_CFG80211_CERTIFICATION_ONUS is not set"
+            echo "# CONFIG_CFG80211_CRDA_SUPPORT is not set"
+            echo "# CONFIG_CFG80211_DEBUGFS is not set"
+            echo "# CONFIG_CFG80211_DEFAULT_PS is not set"
+            echo "# CONFIG_CFG80211_DEVELOPER_WARNINGS is not set"
+            echo "CONFIG_CFG80211_REQUIRE_SIGNED_REGDB=y"
+            echo "CONFIG_CFG80211_USE_KERNEL_REGDB_KEYS=y"
+            echo "# CONFIG_CFG80211_WEXT is not set"
+            echo "CONFIG_NL80211_TESTMODE=y"; } > "$PIN"
+        fi
+        cat "$PIN"
         # cfg80211 first: with no vendor Module.symvers in this tree there is
         # nothing for mac80211 to resolve its cfg80211 symbols against, and every
         # subsequent build_sub fails. Building it here puts those symbols into
         # $OUT/Module.symvers for the rest of the pass. We build it but do NOT
-        # ship it -- the device keeps its own cfg80211 (kiwi_v2 holds it), and
-        # both come from the same GKI 5.15.180 source, so the CRCs line up.
+        # ship it -- the device keeps its own cfg80211 (kiwi_v2 holds it), and the
+        # pin above is what makes the CRCs line up.
         MK olddefconfig >/dev/null 2>&1; build_sub net/wireless cfg80211
         rm -f "$MODZIP_DIR/cfg80211.ko"
         # build_sub restores the pristine KMI Module.symvers on every call, which
@@ -1969,19 +1997,26 @@ runs:
         [ -f "$CK/net/mac80211/Module.symvers" ] && SV="$SV $CK/net/mac80211/Module.symvers"
         echo "symvers now: $SV"
 
-        # The device's cfg80211 is a different build from ours (its vermagic is
-        # 5.15.180-gef4e36add077), so our mac80211 will not load against it:
-        # 'disagrees about version of symbol cfg80211_rx_assoc_resp'. Shipping a
-        # coherent stack means our cfg80211 + mac80211 AND the QCA driver that
-        # holds cfg80211 - which is why EmberHeart ships qca_cld3_kiwi_v2.ko.
+        # With the pin above, mac80211 drops in on the device's own cfg80211 and the
+        # QCA driver is not in the way. Build it anyway so the set stays coherent if
+        # we ever do have to replace cfg80211: kiwi_v2 is the module that holds it.
         WLAN="$CK/../../vendor/qcom/opensource/wlan"
         QDEV="${OP_QCACLD_DEV_NAME:-kiwi_v2}"
         if [ -d "$WLAN/qcacld-3.0/.$QDEV" ]; then
           echo "building the QCA wlan stack ($QDEV) against our cfg80211"
+          # cnss2 and icnss2 include soc/qcom/*.h and soc/oplus/*.h, which exist
+          # only in msm-kernel. LINUXINCLUDE lists common first, so this fills
+          # the gaps without shadowing anything common already provides.
+          QINC=""
+          [ -d "$MSM_KERNEL_FOLDER/include" ] && QINC="-I$MSM_KERNEL_FOLDER/include"
           QMK="LLVM=1 LLVM_IAS=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KERNEL_SRC=$CK"
           for wm in "$WLAN/platform" "$WLAN/qcacld-3.0/.$QDEV"; do
             [ -d "$wm" ] || { echo "::warning::missing $wm"; continue; }
-            if make -C "$wm" M="$wm" -j"$(nproc --all)" $QMK O="$OUT" CHIPSET_COMPANY=QCOM OPLUS_VND_BUILD_PLATFORM="$OP_SOC" KBUILD_EXTRA_SYMBOLS="$SV" modules; then
+            # qcacld has no modules target, and the .kiwi_v2 entry point is a
+            # symlink to . so nothing tells it which profile to build
+            QT=modules; QN=""
+            case "$wm" in *qcacld*) QT=all; QN="MODNAME=$QDEV WLAN_PROFILE=$QDEV";; esac
+            if make -C "$wm" M="$wm" -j"$(nproc --all)" $QMK O="$OUT" KCFLAGS="$QINC" CHIPSET_COMPANY=QCOM OPLUS_VND_BUILD_PLATFORM="$OP_SOC" KBUILD_EXTRA_SYMBOLS="$SV" $QN $QT; then
               [ -f "$wm/Module.symvers" ] && SV="$SV $wm/Module.symvers"
               for ko in $(find "$wm" -name "*.ko" 2>/dev/null); do
                 llvm-strip --strip-debug "$ko" 2>/dev/null || true
