@@ -1950,6 +1950,11 @@ runs:
         rm -rf rtw88 && git clone --depth 1 https://github.com/lwfinger/rtw88.git
         sed -i 's/$(CONFIG_RTW88)/m/g' Makefile
         grep -v 'rtw88/Kconfig' Kconfig > Kconfig.nh && mv Kconfig.nh Kconfig
+        # devm_kmemdup_array only landed upstream in 6.13, but lwfinger guards its
+        # own shim on < 6.12 - so an Android GKI 6.12 kernel gets neither and
+        # rtw88/main.c fails to compile. Widen the guard to cover 6.12 too.
+        sed -i "s/KERNEL_VERSION(6, 12, 0)/KERNEL_VERSION(6, 13, 0)/" rtw88/main.h
+        grep -n "KERNEL_VERSION(6, 13, 0)" rtw88/main.h | head -1
         cd "$CK"
         # our own mac80211: the vendor one is built from a different tree and its
         # struct ieee80211_ops layout does not match what these drivers expect
