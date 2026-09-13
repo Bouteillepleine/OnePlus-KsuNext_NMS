@@ -2000,7 +2000,16 @@ runs:
         # this comparison is here to catch: a config guard inside struct cfg80211_ops
         # that changes which function pointer sits at which offset.
         DEVSV="$GITHUB_ACTION_PATH/nethunter/${OP_MODEL}_device_cfg80211.symvers"
-        if [ -f "$DEVSV" ]; then
+        DEVMAC="$GITHUB_ACTION_PATH/nethunter/${OP_MODEL}_device_mac80211.symvers"
+        if [ -f "$DEVSV" ] && [ -f "$DEVMAC" ]; then
+          # Drivers-only: this device keeps BOTH its cfg80211 and its mac80211, so
+          # nothing of ours is swapped in and the drivers must agree with what is
+          # already loaded. Link them straight against the recorded export CRCs.
+          cat "$DEVSV" "$DEVMAC" > "$OUT/device_wifi.symvers"
+          SV="$OUT/device_wifi.symvers"
+          echo "drivers-only build: $(wc -l < "$SV") symbols recorded from the device"
+          echo "  no cfg80211.ko or mac80211.ko will be shipped for $OP_MODEL"
+        elif [ -f "$DEVSV" ]; then
           MK olddefconfig >/dev/null 2>&1; build_sub net/wireless cfg80211
           rm -f "$MODZIP_DIR/cfg80211.ko"
           OURSV="$CK/net/wireless/Module.symvers"
@@ -2032,6 +2041,7 @@ runs:
           [ -f "$CK/net/mac80211/Module.symvers" ] && SV="$SV $CK/net/mac80211/Module.symvers"
         fi
         echo "symvers now: $SV"
+        [ -f "$DEVMAC" ] && rm -f "$MODZIP_DIR/mac80211.ko"
 
         # cfg80211 is never replaced, so the QCA driver that holds it does not need
         # rebuilding. qcacld also does not currently compile against the GKI common

@@ -6,6 +6,7 @@
   "android_version": "android16",
   "kernel_version": "6.12",
   "os_version": "A16",
+  "nethunter": true,
   "lto": "none",
   "zyc_compiler": "",
   "c_compiler": "kernel_platform/prebuilts/clang/host/linux-x86/clang-r547379/bin",
