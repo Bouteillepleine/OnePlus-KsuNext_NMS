@@ -2009,12 +2009,14 @@ runs:
           SV="$OUT/device_wifi.symvers"
           echo "drivers-only build: $(wc -l < "$SV") symbols recorded from the device"
           echo "  no cfg80211.ko or mac80211.ko will be shipped for $OP_MODEL"
-          # ath9k force-selects MAC80211_LEDS whenever LEDS_CLASS=y, and the five
-          # __ieee80211_*_led_* symbols that pulls in are not exported by this
-          # device mac80211 - which this mode cannot replace. Take LEDS_CLASS out
-          # of the module config so the select has nothing to fire on.
-          { echo "# CONFIG_LEDS_CLASS is not set"
-            echo "# CONFIG_MAC80211_LEDS is not set"; } >> "$PIN"
+          # ath9k is the ONLY driver here that force-selects MAC80211_LEDS, and the
+          # five __ieee80211_*_led_* symbols it pulls in are not exported by this
+          # device mac80211 - which this mode cannot replace. LEDS_CLASS cannot be
+          # held off either: too many enabled GKI drivers select it back. So ath9k
+          # is skipped here; carl9170, mt76, rt2x00 and rtw88 do not select it and
+          # build fine without the LED code.
+          NH_SKIP_ATH9K=1
+          echo "# CONFIG_MAC80211_LEDS is not set" >> "$PIN"
         elif [ -f "$DEVSV" ]; then
           MK olddefconfig >/dev/null 2>&1; build_sub net/wireless cfg80211
           rm -f "$MODZIP_DIR/cfg80211.ko"
@@ -2084,8 +2086,14 @@ runs:
         else
           echo "QCA stack not built (set OP_QCACLD_BUILD=true to try)"
         fi
-        "$CK/scripts/config" --file "$OUT/.config" \
-          --enable WLAN_VENDOR_ATH --module ATH9K_HW --module ATH9K_COMMON --module ATH9K_HTC --module CARL9170
+        if [ "${NH_SKIP_ATH9K:-0}" = 1 ]; then
+          echo "skipping ath9k: it selects MAC80211_LEDS, whose symbols this device does not export"
+          "$CK/scripts/config" --file "$OUT/.config" \
+            --enable WLAN_VENDOR_ATH --disable ATH9K --disable ATH9K_HTC --module CARL9170
+        else
+          "$CK/scripts/config" --file "$OUT/.config" \
+            --enable WLAN_VENDOR_ATH --module ATH9K_HW --module ATH9K_COMMON --module ATH9K_HTC --module CARL9170
+        fi
         MK olddefconfig >/dev/null 2>&1; build_sub drivers/net/wireless/ath ath9k
         "$CK/scripts/config" --file "$OUT/.config" --enable WLAN_VENDOR_MEDIATEK \
           --module MT7601U --module MT76_CORE --module MT76_USB --module MT7921U --module MT7921_COMMON
