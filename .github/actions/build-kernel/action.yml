@@ -1978,12 +1978,11 @@ runs:
             echo "# CONFIG_CFG80211_WEXT is not set"
             echo "CONFIG_NL80211_TESTMODE=y"; } > "$PIN"
         fi
-        # kalama_GKI.config claims CONFIG_NL80211_TESTMODE=y, but the cfg80211.ko the
-        # device actually ships does not export cfg80211_testmode_alloc_reply_skb, so
-        # it was built with it off. It is the only config guard inside struct
-        # cfg80211_ops, and getting it wrong moves exactly one CRC: wiphy_new_nm.
-        sed -i "/^CONFIG_NL80211_TESTMODE/d" "$PIN"
-        echo "# CONFIG_NL80211_TESTMODE is not set" >> "$PIN"
+        # NL80211_TESTMODE stays exactly as the vendor fragment sets it. It guards two
+        # members inside struct cfg80211_ops, so getting it wrong does not just move a
+        # CRC - it shifts every op after testmode_dump and the stock cfg80211 ends up
+        # calling the wrong function pointer at wiphy_register. TESTMODE adds no
+        # exported symbol, so the device's own cfg80211.ko cannot be probed for it.
         cat "$PIN"
         # Config alone still leaves wiphy_new_nm off by one CRC: the cfg80211.ko the
         # device runs was built from msm-kernel, whose cfg80211.h adds a tx_addr
@@ -1996,18 +1995,27 @@ runs:
           cp "$MSMH" "$CK/include/net/cfg80211.h"
           echo "cfg80211.h from msm-kernel ($(diff "$CK/include/net/cfg80211.h.common" "$MSMH" | grep -c "^[<>]") lines differ)"
         fi
-        # cfg80211.h is identical to the header the device's cfg80211.ko was built
-        # from, so struct cfg80211_ops has the same layout and only genksyms
-        # disagrees about its hash. Where we have a recording of the device's own
-        # cfg80211 export CRCs, build mac80211 against those: it then loads on the
-        # stock cfg80211 instead of needing one of ours. ath9k force-selects
-        # MAC80211_LEDS, whose five symbols the stock mac80211 does not export, so
-        # our mac80211 still ships and still gets swapped in at boot.
+        # Build cfg80211 ourselves and hold it against the device's own export CRCs.
+        # Stamping the recorded CRCs into mac80211 instead would hide the one thing
+        # this comparison is here to catch: a config guard inside struct cfg80211_ops
+        # that changes which function pointer sits at which offset.
         DEVSV="$GITHUB_ACTION_PATH/nethunter/${OP_MODEL}_device_cfg80211.symvers"
         if [ -f "$DEVSV" ]; then
-          cp "$DEVSV" "$OUT/device_cfg80211.symvers"
-          SV="$OUT/device_cfg80211.symvers"
-          echo "cfg80211 CRCs taken from the device: $(wc -l < "$SV") symbols"
+          MK olddefconfig >/dev/null 2>&1; build_sub net/wireless cfg80211
+          rm -f "$MODZIP_DIR/cfg80211.ko"
+          OURSV="$CK/net/wireless/Module.symvers"
+          bad=0
+          while read -r crc sym rest; do
+            ours=$(awk -v s="$sym" "\$2==s {print \$1}" "$OURSV" 2>/dev/null | head -1)
+            [ -z "$ours" ] && continue
+            [ "$ours" = "$crc" ] || { echo "::warning::cfg80211 CRC differs for $sym: device $crc, ours $ours"; bad=$((bad+1)); }
+          done < "$DEVSV"
+          if [ "$bad" -gt 0 ]; then
+            echo "::error::our cfg80211 disagrees with the device on $bad symbol(s) - mac80211 built on this will not load"
+          else
+            echo "cfg80211 matches the device on every recorded symbol"
+          fi
+          SV="$OURSV"
           MK olddefconfig >/dev/null 2>&1; build_sub net/mac80211 mac80211
           [ -f "$CK/net/mac80211/Module.symvers" ] && SV="$SV $CK/net/mac80211/Module.symvers"
         else
