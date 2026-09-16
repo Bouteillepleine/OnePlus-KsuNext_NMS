@@ -41,7 +41,7 @@ runs:
         # Download Manifest Archives
         import xml.etree.ElementTree as ET
         import subprocess
-        import os, shutil
+        import os, shutil, random
         import time
         import glob
         from concurrent.futures import ThreadPoolExecutor
@@ -97,16 +97,52 @@ runs:
         _HDRS = {"Authorization": f"Bearer {GH_TOKEN}", "Accept": "application/vnd.github+json"}
         _CACHE_TAG = "toolchain-cache"
         _asset_ids = {}
+        _API_ATTEMPTS = 5
+
+        class _CacheApiFailure(Exception):
+            pass
+
+        def _api_get(url, headers, params, what, allow_redirects=True):
+            _delay = 2.0
+            for _attempt in range(1, _API_ATTEMPTS + 1):
+                try:
+                    _r = requests.get(
+                        url, headers=headers, params=params, timeout=30,
+                        allow_redirects=allow_redirects,
+                    )
+                except requests.RequestException as _err:
+                    _why = f"{type(_err).__name__}: {_err}"
+                else:
+                    if _r.status_code < 400:
+                        return _r
+                    _rate_limited = (
+                        _r.status_code == 429
+                        or (_r.status_code == 403 and (
+                            _r.headers.get("x-ratelimit-remaining") == "0"
+                            or "Retry-After" in _r.headers
+                        ))
+                    )
+                    if not _rate_limited and _r.status_code < 500:
+                        raise _CacheApiFailure(f"{what}: HTTP {_r.status_code}")
+                    _why = f"HTTP {_r.status_code}"
+                    try:
+                        _delay = max(_delay, float(_r.headers.get("Retry-After", 0)))
+                    except (TypeError, ValueError):
+                        pass
+                if _attempt == _API_ATTEMPTS:
+                    raise _CacheApiFailure(f"{what}: {_why} (after {_API_ATTEMPTS} attempts)")
+                _sleep = _delay + random.uniform(0, 1)
+                print(f"::warning::{what}: {_why} - retrying in {_sleep:.1f}s ({_attempt}/{_API_ATTEMPTS - 1})")
+                time.sleep(_sleep)
+                _delay = min(_delay * 2, 30.0)
+
         try:
             _rel_id = None
             for _page in range(1, 11):
-                _r = requests.get(
+                _r = _api_get(
                     f"https://api.github.com/repos/{TARGET_REPO}/releases",
-                    headers=_HDRS, params={"per_page": 100, "page": _page}, timeout=30,
+                    _HDRS, {"per_page": 100, "page": _page}, "listing releases",
                 )
-                if _r.status_code != 200:
-                    print(f"::warning::Could not list releases (HTTP {_r.status_code})")
-                    break
                 _batch = _r.json()
                 if not _batch:
                     break
@@ -117,13 +153,10 @@ runs:
                 print(f"::warning::No '{_CACHE_TAG}' release found in {TARGET_REPO}")
             else:
                 for _page in range(1, 21):
-                    _r = requests.get(
+                    _r = _api_get(
                         f"https://api.github.com/repos/{TARGET_REPO}/releases/{_rel_id}/assets",
-                        headers=_HDRS, params={"per_page": 100, "page": _page}, timeout=30,
+                        _HDRS, {"per_page": 100, "page": _page}, "paging toolchain-cache assets",
                     )
-                    if _r.status_code != 200:
-                        print(f"::warning::Could not page toolchain-cache assets (HTTP {_r.status_code})")
-                        break
                     _batch = _r.json()
                     for _a in _batch:
                         _asset_ids[_a["name"]] = _a["id"]
@@ -131,24 +164,27 @@ runs:
                         break
                 print(f"  [CACHE] toolchain-cache: {len(_asset_ids)} asset(s) indexed")
         except Exception as _e:
-            print(f"::warning::Could not index toolchain-cache assets: {_e}")
+            if ALLOW_DIRECT_TOOLCHAIN:
+                print(f"::warning::Could not index toolchain-cache assets: {_e}")
+                print(f"::warning::Small build ({TOTAL_DEVICES} device(s)) - falling back to direct upstream downloads")
+            else:
+                print(f"::error::[FATAL ERROR] Could not index toolchain-cache assets: {_e}")
+                print("::error::[FATAL ERROR] API failure, NOT a missing toolchain. The cache is intact - re-run this job.")
+                raise SystemExit(1)
 
         def cache_url(filename):
-            """Signed download URL for a toolchain-cache asset, or None if absent."""
             aid = _asset_ids.get(filename)
             if not aid:
                 return None
-            try:
-                r = requests.get(
-                    f"https://api.github.com/repos/{TARGET_REPO}/releases/assets/{aid}",
-                    headers={"Authorization": f"Bearer {GH_TOKEN}", "Accept": "application/octet-stream"},
-                    allow_redirects=False, timeout=30,
-                )
-                if r.status_code in (301, 302, 303, 307, 308):
-                    return r.headers.get("Location")
-            except Exception as _e:
-                if DEBUG: print(f"  [CACHE] resolve failed for {filename}: {_e}")
-            return None
+            _r = _api_get(
+                f"https://api.github.com/repos/{TARGET_REPO}/releases/assets/{aid}",
+                {"Authorization": f"Bearer {GH_TOKEN}", "Accept": "application/octet-stream"},
+                None, f"resolving {filename}", allow_redirects=False,
+            )
+            _loc = _r.headers.get("Location") if _r.status_code in (301, 302, 303, 307, 308) else None
+            if _loc:
+                return _loc
+            raise _CacheApiFailure(f"resolving {filename}: HTTP {_r.status_code} without a signed URL")
 
         print("::group::Download Manifest Archives")
         
