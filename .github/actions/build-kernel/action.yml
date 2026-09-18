@@ -719,62 +719,6 @@ runs:
         
         
         
-        retry_fetch_archive() {
-          local url="$1"
-          local branch="${2:-main}"
-          local max_attempts=3
-          local attempt=1
-          
-          local repo_name=$(basename "$url" .git)
-          local safe_branch=$(echo "$branch" | tr '/' '_')
-          local archive_name="${repo_name}_${safe_branch}.tar.gz"
-          local shm_path="/dev/shm/$archive_name"
-          
-          local nproc=$(nproc 2>/dev/null || echo 4)
-          
-          local aria_log_flags="--quiet --summary-interval=0"
-          if [ "${{ inputs.debug }}" = "true" ]; then
-              aria_log_flags="--summary-interval=5"
-          fi
-          
-          local aria2_headers=(
-            "--header=User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            "--header=Accept: */*"
-            "--header=Connection: keep-alive"
-          )
-          
-          local download_url=""
-          if [[ "$url" == *"github.com"* ]]; then
-              download_url="${url%.git}/archive/refs/heads/${branch}.tar.gz"
-          elif [[ "$url" == *"gitlab.com"* ]]; then
-              download_url="${url%.git}/-/archive/${branch}/${repo_name}-${branch}.tar.gz"
-          else
-              echo "::error::Unsupported host: $url"
-              return 1
-          fi
-          
-          while [ $attempt -le $max_attempts ]; do
-              echo " Attempt $attempt/$max_attempts: High-speed fetch for $repo_name ($branch)"
-              
-              if aria2c -x16 -s16 -j16 -k1M --retry-wait=2 --max-tries=5 -d "/dev/shm" -o "$archive_name" --allow-overwrite=true "${aria2_headers[@]}" $aria_log_flags "$download_url"; then
-                  mkdir -p "$repo_name"
-                  if tar -I "pigz -p $nproc -b 256" -x --record-size=1M -f "$shm_path" -C "$repo_name" --strip-components=1 --no-same-owner; then
-                      echo "✅ Success: $repo_name synced"
-                      rm -f "$shm_path"
-                      return 0
-                  fi
-              fi
-              
-              echo "⚠️ Attempt $attempt failed, clearing RAM and retrying..."
-              rm -rf "$repo_name" "$shm_path" 2>/dev/null
-              sleep 5
-              attempt=$((attempt + 1))
-          done
-          
-          echo "::error::All attempts failed for $url"
-          return 1
-        }
-        
         retry_clone() {
           local url="$1"
           local branch="${2:-main}"
@@ -843,13 +787,22 @@ runs:
         KSUN_SETUP_SCRIPT="$(mktemp /tmp/ksun_setup_XXXXXX.sh)"
         trap 'rm -f "$KSUN_SETUP_SCRIPT"' EXIT
 
-        echo "Downloading KernelSU Next setup script..."
+        KSU_INPUT="${{ inputs.ksu_branch_or_hash }}"
+        SETUP_REF="${KSU_INPUT:-dev}"
+
+        echo "Downloading KernelSU Next setup script from $SETUP_REF..."
         if ! curl --fail --location --proto '=https' --tlsv1.2 -LSs \
           --retry 5 --retry-delay 5 --retry-all-errors \
-          "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/dev/kernel/setup.sh" \
+          "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/${SETUP_REF}/kernel/setup.sh" \
           -o "$KSUN_SETUP_SCRIPT"; then
-          echo "::error::Failed to download KernelSU Next setup.sh after retries"
-          exit 1
+          echo "::warning::setup.sh not available at $SETUP_REF, falling back to dev"
+          if ! curl --fail --location --proto '=https' --tlsv1.2 -LSs \
+            --retry 5 --retry-delay 5 --retry-all-errors \
+            "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/dev/kernel/setup.sh" \
+            -o "$KSUN_SETUP_SCRIPT"; then
+            echo "::error::Failed to download KernelSU Next setup.sh after retries"
+            exit 1
+          fi
         fi
 
         SCRIPT_SIZE="$(stat -c%s "$KSUN_SETUP_SCRIPT")"
@@ -865,7 +818,6 @@ runs:
 
         chmod +x "$KSUN_SETUP_SCRIPT"
 
-        KSU_INPUT="${{ inputs.ksu_branch_or_hash }}"
         if [ -z "$KSU_INPUT" ]; then
           bash "$KSUN_SETUP_SCRIPT"
         else
@@ -1097,12 +1049,7 @@ runs:
         BRANCH_SUFFIX=$(basename "$OP_BRANCH")
         
         NTSYNC_PATCH=""
-        if [ -n "$NTSYNC_PATCH" ]; then
-          if [ ! -f "$NTSYNC_PATCH" ]; then
-            echo "::error::NTSync compat patch not found for ${OP_MODEL}: $(basename $NTSYNC_PATCH)"
-            exit 1
-          fi
-        elif [ -f "$NTSYNC_FOLDER/ntsync_compat_${GKI_KEY}_${OP_OS_VERSION}.patch" ]; then
+        if [ -f "$NTSYNC_FOLDER/ntsync_compat_${GKI_KEY}_${OP_OS_VERSION}.patch" ]; then
           NTSYNC_PATCH="$NTSYNC_FOLDER/ntsync_compat_${GKI_KEY}_${OP_OS_VERSION}.patch"
         elif [ -f "$NTSYNC_FOLDER/ntsync_compat_${GKI_KEY}.patch" ]; then
           NTSYNC_PATCH="$NTSYNC_FOLDER/ntsync_compat_${GKI_KEY}.patch"
@@ -1460,11 +1407,15 @@ runs:
           KERNEL_VERSION="${{ env.KERNEL_VER }}"
           MIN_VERSION="5.16"
           if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
-            DEBLOAT_PATCH_URL="https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/main/experimental/0001-Support-conditional-vendor-modules-blacklisting-5.15-and-below.patch"
+            DEBLOAT_PATCH="$BOUTEILLE_KERNEL_PATCHES_FOLDER/experimental/0001-Support-conditional-vendor-modules-blacklisting-5.15-and-below.patch"
           else
-            DEBLOAT_PATCH_URL="https://raw.githubusercontent.com/Bouteillepleine/kernel_patches/main/experimental/0001-Support-conditional-vendor-modules-blacklisting-6.1-and-above.patch"
+            DEBLOAT_PATCH="$BOUTEILLE_KERNEL_PATCHES_FOLDER/experimental/0001-Support-conditional-vendor-modules-blacklisting-6.1-and-above.patch"
           fi
-          curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 15 "$DEBLOAT_PATCH_URL" | patch -p1
+          if [ ! -f "$DEBLOAT_PATCH" ]; then
+            echo "::error::Vendor-module debloat patch not found: $DEBLOAT_PATCH"
+            exit 1
+          fi
+          patch -p1 < "$DEBLOAT_PATCH"
         fi
 
     - name: 🔧 Add ADIOS I/O Scheduler
@@ -1564,7 +1515,6 @@ runs:
       shell: bash
       env:
         PYTHONWARNINGS: "ignore:invalid escape sequence"
-        CCACHE_EXTRAFILES: "$COMMON_KERNEL_FOLDER/out/kernel/config_data.gz"
       run: |
         set -euo pipefail
         echo "::group::Build kernel with ccache optimization"
@@ -1607,6 +1557,9 @@ runs:
         if [ -n "${{ inputs.build_timestamp }}" ]; then
           export KBUILD_BUILD_TIMESTAMP="${{ inputs.build_timestamp }}"
           echo "📅 Using custom build timestamp: $KBUILD_BUILD_TIMESTAMP"
+        elif [ -n "${OP_KTIMESTAMP:-}" ]; then
+          export KBUILD_BUILD_TIMESTAMP="$OP_KTIMESTAMP"
+          echo "📅 Using this model's stock kernel timestamp: $KBUILD_BUILD_TIMESTAMP"
         else
           export KBUILD_BUILD_TIMESTAMP="$KERNEL_BUILD_DATE"
           echo "📅 Using current UTC build timestamp: $KBUILD_BUILD_TIMESTAMP"
@@ -1672,7 +1625,12 @@ runs:
         
         case "$OP_BRANCH" in
           wild/sm8750|wild/sm8850|wild/sm8845)
-            KCFLAGS_EXTRA="-mcpu=oryon-1 ${KCFLAGS_EXTRA}"
+            if echo 'int main(void){return 0;}' | clang -mcpu=oryon-1 --target=aarch64-linux-gnu -fsyntax-only -x c - >/dev/null 2>&1; then
+              KCFLAGS_EXTRA="-mcpu=oryon-1 ${KCFLAGS_EXTRA}"
+              echo "🧠 -mcpu=oryon-1 enabled for $OP_BRANCH"
+            else
+              echo "::warning::$CLANG_VERSION does not accept -mcpu=oryon-1; building $OP_BRANCH generic"
+            fi
             ;;
         esac
         
@@ -1944,11 +1902,7 @@ runs:
         
         
         ZIP_MODEL=$(echo "$OP_MODEL" | sed 's/-[0-9]\+\.[0-9]\+\.[0-9]\+$//')
-        if [ "${{ env.OP_NMS }}" = true ]; then
-          ZIP_NAME="AK3_${ZIP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_${{ inputs.ksu_type }}_${KSUVER:-unknown}.zip"
-        else
-          ZIP_NAME="AK3_${ZIP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_${{ inputs.ksu_type }}_${KSUVER:-unknown}.zip"
-        fi
+        ZIP_NAME="AK3_${ZIP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_${{ inputs.ksu_type }}_${KSUVER:-unknown}.zip"
         mkdir -p "$ARTIFACTS_FOLDER"
         
         echo "Creating flashable ZIP: $ZIP_NAME"

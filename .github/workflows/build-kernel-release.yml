@@ -52,7 +52,7 @@ on:
         options: [O2, O3]
         default: O2
       build_timestamp:
-        description: 'Custom kernel build timestamp for uname -a (e.g. "Fri Dec 5 02:05:55 UTC 2025"). Leave empty for current time.'
+        description: 'Custom kernel build timestamp for uname -a, applied to EVERY device (e.g. "Fri Dec 5 02:05:55 UTC 2025"). Leave empty to use each model''s own stock timestamp from its config (ktimestamp), falling back to the current time.'
         type: string
         default: ''
       mirror_toolchains:
@@ -223,8 +223,8 @@ jobs:
           echo "Resolving $ksu_type hash ($ksu_ref)..."
           
           until [ $RETRY_COUNT -ge $MAX_RETRIES ]; do
-            RESULT=$(gh api graphql -f query="$QUERY" -f owner="$KSU_REPO_OWNER" -f name="$KSU_REPO_NAME" -f headRef="$HEAD_REF" -f tagRef="$TAG_REF" -f objRef="$ksu_ref" 2>/dev/null)
-            EXIT_CODE=$?
+            EXIT_CODE=0
+            RESULT=$(gh api graphql -f query="$QUERY" -f owner="$KSU_REPO_OWNER" -f name="$KSU_REPO_NAME" -f headRef="$HEAD_REF" -f tagRef="$TAG_REF" -f objRef="$ksu_ref" 2>/dev/null) || EXIT_CODE=$?
             
             if [ $EXIT_CODE -eq 0 ] && [ ! -z "$RESULT" ]; then
               echo "  ✅ API Success"
@@ -761,6 +761,51 @@ jobs:
           merge-multiple: true
           skip-decompress: true
 
+      - name: 📦 Mirror the NoMount Suite add-on into this release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -f ./downloaded-artifacts/ccache-binary.zip
+
+          MOD_REPO="Bouteillepleine/NoMount-Suite"
+          MOD_JSON=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/${MOD_REPO}/releases/latest" 2>/dev/null || true)
+          MOD_ASSET=$(printf '%s' "$MOD_JSON" | grep -oE '"name": *"00_NoMount-Module-[^"]+\.zip"' | head -1 | sed 's/.*"\(00_NoMount[^"]*\)"/\1/' || true)
+          MOD_URL=$(printf '%s' "$MOD_JSON" | grep -oE '"browser_download_url": *"[^"]*/00_NoMount-Module-[^"]+\.zip"' | head -1 | sed 's/.*: *"//; s/"$//' || true)
+
+          MOD_MIRRORED=false
+          if [ -n "$MOD_ASSET" ] && [ -n "$MOD_URL" ]; then
+            if curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 15 \
+                 "$MOD_URL" -o "./downloaded-artifacts/${MOD_ASSET}" && \
+               [ -s "./downloaded-artifacts/${MOD_ASSET}" ] && \
+               unzip -tqq "./downloaded-artifacts/${MOD_ASSET}"; then
+              MOD_MIRRORED=true
+              echo "✅ mirrored $MOD_ASSET ($(stat -c%s "./downloaded-artifacts/${MOD_ASSET}") bytes)"
+            else
+              rm -f "./downloaded-artifacts/${MOD_ASSET}"
+              echo "::warning::Could not download ${MOD_ASSET} from ${MOD_REPO}; the release will link the Suite's own page instead."
+            fi
+          fi
+
+          if [ -z "$MOD_ASSET" ]; then
+            MOD_VER=$(curl -fsSL "https://raw.githubusercontent.com/${MOD_REPO}/main/module/module.prop" 2>/dev/null | awk -F= '/^version=/{print $2}' || true)
+            MOD_VER="${MOD_VER:-v1.0.5}"
+            MOD_ASSET="00_NoMount-Module-${MOD_VER}.zip"
+          fi
+          if [ -z "$MOD_URL" ]; then
+            MOD_URL="${{ github.server_url }}/${MOD_REPO}/releases/latest"
+            echo "::warning::Could not read the NoMount Suite asset URL from ${MOD_REPO}; linking the releases page instead."
+          fi
+          MOD_VER=$(printf '%s' "$MOD_ASSET" | sed 's/^00_NoMount-Module-//; s/\.zip$//')
+
+          {
+            echo "MOD_REPO=$MOD_REPO"
+            echo "MOD_ASSET=$MOD_ASSET"
+            echo "MOD_URL=$MOD_URL"
+            echo "MOD_VER=$MOD_VER"
+            echo "MOD_MIRRORED=$MOD_MIRRORED"
+          } >> "$GITHUB_ENV"
+
       - name: 🔐 Generate Checksums
         shell: bash
         run: |
@@ -808,7 +853,7 @@ jobs:
           } > 00_DOWNLOADS.md
 
           for os in A16; do
-            mapfile -t files < <(find downloaded-artifacts -maxdepth 1 -type f -name "*_${os}_*.zip" | sort)
+            mapfile -t files < <(find downloaded-artifacts -maxdepth 1 -type f -name "AK3_*_${os}_*.zip" | sort)
 
             if [ "${#files[@]}" -eq 0 ]; then
               continue
@@ -834,10 +879,7 @@ jobs:
               ksu_type="${parts[3]:-unknown}"
               ksu_ver="${parts[4]:-unknown}"
 
-              nm_ver="none"
-              if [ "${parts[5]:-}" = "NoMount" ]; then
-                nm_ver="${parts[6]:-unknown}"
-              fi
+              nm_ver="${NOMOUNT_VERSION:-unknown}"
 
               sha="$(sha256sum "$file" | awk '{print $1}')"
               short_sha="${sha:0:12}"
@@ -868,14 +910,12 @@ jobs:
         id: generate-notes
         run: |
           echo "=== Start building the release notes ==="
-          
-          rm -f ./downloaded-artifacts/ccache-binary.zip
-          
+
           declare -A device_info
           
           JSON_BUILD_DATA=$(jq -c '.' ./downloaded-artifacts/matrix.json)
           
-          for file in $(find downloaded-artifacts -maxdepth 1 -name "*.zip" -type f | sort); do
+          for file in $(find downloaded-artifacts -maxdepth 1 -name "AK3_*.zip" -type f | sort); do
             if [ -f "$file" ]; then
               zipname=$(basename "$file" .zip)
               rest="${zipname#AK3_}"
@@ -885,11 +925,7 @@ jobs:
               kernel_version="${parts[2]}"
               ksu_type="${parts[3]}"
               ksu_ver="${parts[4]}"
-              if [ "${parts[5]:-}" = "NoMount" ]; then
-                nm_ver="${parts[6]:-unknown}"
-              else
-                nm_ver="none"
-              fi
+              nm_ver="${NOMOUNT_VERSION:-unknown}"
               full_model="${model}_${os_version}_${kernel_version}"
               device_info["$full_model"]="$model|$os_version|$kernel_version|$ksu_type|$ksu_ver|$nm_ver|$zipname"
             fi
@@ -904,22 +940,15 @@ jobs:
           
           
           
-          MOD_REPO="Bouteillepleine/NoMount-Suite"
-          MOD_JSON=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/${MOD_REPO}/releases/latest" 2>/dev/null || true)
-          MOD_ASSET=$(printf '%s' "$MOD_JSON" | grep -oE '"name": *"00_NoMount-Module-[^"]+\.zip"' | head -1 | sed 's/.*"\(00_NoMount[^"]*\)"/\1/')
-          MOD_URL=$(printf '%s' "$MOD_JSON" | grep -oE '"browser_download_url": *"[^"]*/00_NoMount-Module-[^"]+\.zip"' | head -1 | sed 's/.*: *"//; s/"$//')
-          if [ -z "$MOD_ASSET" ]; then
-            MOD_VER=$(curl -fsSL "https://raw.githubusercontent.com/${MOD_REPO}/main/module/module.prop" 2>/dev/null | awk -F= '/^version=/{print $2}')
-            MOD_VER="${MOD_VER:-v1.0.5}"
-            MOD_ASSET="00_NoMount-Module-${MOD_VER}.zip"
-          fi
-          if [ -z "$MOD_URL" ]; then
-            MOD_URL="${{ github.server_url }}/${MOD_REPO}/releases/latest"
-            echo "::warning::Could not read the NoMount Suite asset URL from ${MOD_REPO}; linking the releases page instead."
-          fi
-          MOD_VER=$(printf '%s' "$MOD_ASSET" | sed 's/^00_NoMount-Module-//; s/\.zip$//')
           echo "NoMount Suite asset: $MOD_ASSET"
           echo "NoMount Suite URL:   $MOD_URL"
+          echo "NoMount Suite mirrored into this release: $MOD_MIRRORED"
+
+          if [ "$MOD_MIRRORED" = "true" ]; then
+            MOD_GET="Download \`$MOD_ASSET\` from the **Assets** below (it is the first entry)."
+          else
+            MOD_GET="Download \`$MOD_ASSET\` from the [NoMount Suite release](${MOD_URL})."
+          fi
 
           cat << EOF > release_notes.md
           # KernelSU Next 📦 NoMount (v$NOMOUNT_VERSION)
@@ -933,7 +962,7 @@ jobs:
           | | Download | Where it's from | How to install |
           |---|---|---|---|
           | 1️⃣ **Kernel** | \`AK3_<device>_…zip\` (pick yours below) | built by this repo's CI | Kernel Flasher / KernelSU Next Manager |
-          | 2️⃣ **NoMount Suite** | \`$MOD_ASSET\` | the separate [NoMount project](${{ github.server_url }}/${MOD_REPO}/releases/latest), mirrored into the Assets below so both downloads are on one page | KernelSU Next Manager → Modules → Install from storage |
+          | 2️⃣ **NoMount Suite** | \`$MOD_ASSET\` | the separate [NoMount project](${{ github.server_url }}/${MOD_REPO}/releases/latest) | KernelSU Next Manager → Modules → Install from storage |
 
           > The kernel has NoMount **compiled in but dormant** — the **NoMount Suite module activates it**. You need both.
 
@@ -941,10 +970,11 @@ jobs:
 
           After flashing the kernel and rebooting:
 
+          $MOD_GET
 
           Then: KernelSU Next Manager → **Modules → Install from storage** → select \`$MOD_ASSET\` → **reboot**.
 
-          > _The copy in the Assets below is pinned to \`$MOD_VER\` and does not update itself. The [NoMount project's own release](${{ github.server_url }}/${MOD_REPO}/releases/latest) is always current, and once installed the Suite offers its own in-app update._
+          > _This copy of the Suite is pinned to \`$MOD_VER\` and does not update itself. The [NoMount project's own release](${{ github.server_url }}/${MOD_REPO}/releases/latest) is always current, and once installed the Suite offers its own in-app update._
           > _One metamodule at a time: remove any existing metamodule and reboot before installing this one._
 
           ---
@@ -1085,7 +1115,7 @@ jobs:
           cat << EOF >> release_notes.md
           - **NoMount $NOMOUNT_VERSION** - Mountless (hookless VFS) root hiding
           EOF
-          if [ "${ksu_ver_global:-0}" -lt 12884 ]; then
+          if [[ "${ksu_ver_global:-0}" =~ ^[0-9]+$ ]] && [ "$ksu_ver_global" -lt 12884 ]; then
             cat << EOF >> release_notes.md
           - **Manual Hooks** - scope_min_manual_hooks_v1.4 for better compatibility
           EOF
@@ -1193,7 +1223,7 @@ jobs:
           ## 🎉 Release Created Successfully
           
           **Tag:** [\`${{ env.NEW_TAG }}\`](${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ env.NEW_TAG }})  
-          **Kernels:** $(find ./downloaded-artifacts -maxdepth 1 -name "*.zip" -type f | wc -l)
+          **Kernels:** $(find ./downloaded-artifacts -maxdepth 1 -name "AK3_*.zip" -type f | wc -l)
           
           ### 📦 Assets
           EOF
