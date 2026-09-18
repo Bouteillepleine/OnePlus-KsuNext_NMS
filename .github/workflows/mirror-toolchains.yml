@@ -358,7 +358,19 @@ jobs:
           TARGET_REPO="${{ github.repository }}"
           FILENAME="${{ matrix.cache_file }}"
           DOWNLOAD_URL="${{ matrix.url }}"
+          REV="${{ matrix.rev }}"
           RELEASE_TAG="toolchain-cache"
+
+          # A sha-keyed asset can never change, so a hit means we are done. A
+          # branch-keyed one (AnyKernel3 tracks a branch, not a sha) keeps its
+          # filename while its contents move, so skipping on a name hit would
+          # freeze it at whatever was mirrored first -- re-fetch and clobber.
+          if [[ "$REV" =~ ^[0-9a-f]{40}$ ]]; then
+            IMMUTABLE=true
+          else
+            IMMUTABLE=false
+            echo "ℹ️  '$REV' is not a commit sha: re-mirroring $FILENAME instead of trusting the cached copy."
+          fi
 
           echo "🔍 Checking if $FILENAME exists in mirror..."
 
@@ -368,13 +380,20 @@ jobs:
           CACHED_ASSETS="$(gh release view "$RELEASE_TAG" --repo "$TARGET_REPO" --json assets -q '.assets[].name' 2>/dev/null || true)"
 
           if grep -qxF "$FILENAME" <<<"$CACHED_ASSETS" || grep -qxF "${FILENAME}.partaa" <<<"$CACHED_ASSETS"; then
+            CACHED=true
+          else
+            CACHED=false
+          fi
+
+          if [ "$IMMUTABLE" = true ] && [ "$CACHED" = true ]; then
             echo "✅ ${{ matrix.type_label }} revision ${{ matrix.rev }} already cached."
             exit 0
           fi
 
-          echo "📥 Not found. Downloading ${{ matrix.type_label }} from source..."
+          echo "📥 Downloading ${{ matrix.type_label }} from source..."
           echo "URL: $DOWNLOAD_URL"
 
+          DL_OK=true
           aria2c \
             -x16 \
             -s16 \
@@ -387,10 +406,14 @@ jobs:
             --max-tries=10 \
             --allow-overwrite=true \
             -o "$FILENAME" \
-            "$DOWNLOAD_URL"
+            "$DOWNLOAD_URL" || DL_OK=false
 
-          if [ ! -s "$FILENAME" ]; then
-            echo "::error::Downloaded file is empty: $FILENAME"
+          if [ "$DL_OK" != true ] || [ ! -s "$FILENAME" ]; then
+            if [ "$CACHED" = true ]; then
+              echo "::warning::Could not re-fetch $FILENAME; keeping the copy already in the mirror."
+              exit 0
+            fi
+            echo "::error::Failed to download $FILENAME from $DOWNLOAD_URL"
             exit 1
           fi
 
