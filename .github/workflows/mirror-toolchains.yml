@@ -9,7 +9,7 @@ on:
 
 jobs:
   prepare-release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # No checkout: the cache release is a draft, so there is no git tag to create.
       - name: Ensure Single Draft Release
@@ -44,7 +44,7 @@ jobs:
           fi
 
   generate-mirror-matrix:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: prepare-release
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
@@ -325,7 +325,7 @@ jobs:
       - prepare-release
       - generate-mirror-matrix
     if: ${{ needs.generate-mirror-matrix.outputs.count != '0' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     strategy:
       fail-fast: false

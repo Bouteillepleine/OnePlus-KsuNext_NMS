@@ -153,7 +153,7 @@ jobs:
     # unbounded as OnePlus bumps toolchain revs). Deleting a stale asset is safe: the
     # next release build's (idempotent) mirror re-fetches anything still referenced.
     if: ${{ inputs.prune_toolchain_cache }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     env:
@@ -195,7 +195,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   analyze:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       should_cleanup: ${{ steps.analysis.outputs.should_cleanup }}
       total_cache_size: ${{ steps.analysis.outputs.total_cache_size }}
@@ -517,7 +517,7 @@ jobs:
             console.log(`Cleanup needed: ${shouldCleanup}`);
 
   cleanup-caches:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: analyze
     if: |
       always() &&
@@ -831,7 +831,7 @@ jobs:
             await summary.write();
 
   cleanup-runs:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: analyze
     if: |
       always() &&
@@ -1029,7 +1029,7 @@ jobs:
             await summary.write();
 
   final-report:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs:
       - analyze
       - cleanup-caches
