@@ -841,19 +841,12 @@ runs:
           sed -i 's/#if defined(CONFIG_STACKPROTECTOR) && (defined(CONFIG_ARM64) && !defined(CONFIG_STACKPROTECTOR_PER_TASK))/#if 0/' ksu.c
         fi
 
-        NONOTIFY_PATCH="$BOUTEILLE_KERNEL_PATCHES_FOLDER/next/apk_scan_nonotify.patch"
-        if [ -f "$NONOTIFY_PATCH" ]; then
-          if ! patch -p1 --forward < "$NONOTIFY_PATCH"; then
-            echo "::error::Failed to apply apk_scan_nonotify.patch"
-            exit 1
-          fi
-          if grep -q "fp->f_mode |= FMODE_NONOTIFY" manager/apk_sign.c; then
-            echo "::error::apk_scan_nonotify.patch applied but the late FMODE_NONOTIFY assignment remains"
-            exit 1
-          fi
-          echo "-- apk scan nonotify patch applied"
-        else
-          echo "::error::apk_scan_nonotify.patch not found in $BOUTEILLE_KERNEL_PATCHES_FOLDER/next"
+        if grep -q "fp->f_mode |= FMODE_NONOTIFY" manager/apk_sign.c; then
+          echo "::error::KernelSU-Next reverted the apk scan nonotify fix; re-add kernel_patches/next/apk_scan_nonotify.patch"
+          exit 1
+        fi
+        if ! grep -q "ksu_filp_open_nonotify" manager/throne_tracker.c; then
+          echo "::error::throne_tracker.c no longer opens directories via ksu_filp_open_nonotify"
           exit 1
         fi
 
