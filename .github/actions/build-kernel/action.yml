@@ -841,6 +841,21 @@ runs:
           sed -i 's/#if defined(CONFIG_STACKPROTECTOR) && (defined(CONFIG_ARM64) && !defined(CONFIG_STACKPROTECTOR_PER_TASK))/#if 0/' ksu.c
         fi
 
+        NONOTIFY_PATCH="$KERNEL_PATCHES_FOLDER/next/apk_scan_nonotify.patch"
+        if [ -f "$NONOTIFY_PATCH" ]; then
+          if ! patch -p1 --forward < "$NONOTIFY_PATCH"; then
+            echo "::error::Failed to apply apk_scan_nonotify.patch"
+            exit 1
+          fi
+          if grep -q "fp->f_mode |= FMODE_NONOTIFY" manager/apk_sign.c; then
+            echo "::error::apk_scan_nonotify.patch applied but the late FMODE_NONOTIFY assignment remains"
+            exit 1
+          fi
+          echo "-- apk scan nonotify patch applied"
+        else
+          echo "::warning::apk_scan_nonotify.patch not found in $KERNEL_PATCHES_FOLDER/next; manager apk scans will touch atime"
+        fi
+
         if [ -f manager/apk_sign.c ]; then
           ALT_SIZE="0x326"
           ALT_HASH="8e2fd3800c10ac3bace8a3ec09a9668a9faf41e42ff8ebf8235be7dac26ee35c"
