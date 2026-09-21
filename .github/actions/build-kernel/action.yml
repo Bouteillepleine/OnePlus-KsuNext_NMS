@@ -835,11 +835,6 @@ runs:
         fi
 
         KSU_VERSION=$(expr $COMMITS_COUNT "+" $BASE_VERSION)
-        sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" Makefile
-
-        if [ -f ksu.c ]; then
-          sed -i 's/#if defined(CONFIG_STACKPROTECTOR) && (defined(CONFIG_ARM64) && !defined(CONFIG_STACKPROTECTOR_PER_TASK))/#if 0/' ksu.c
-        fi
 
         if grep -q "fp->f_mode |= FMODE_NONOTIFY" manager/apk_sign.c; then
           echo "::error::KernelSU-Next reverted the apk scan nonotify fix; re-add kernel_patches/next/apk_scan_nonotify.patch"
