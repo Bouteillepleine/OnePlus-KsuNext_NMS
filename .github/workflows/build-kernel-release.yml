@@ -105,6 +105,8 @@ jobs:
       - name: 🔍 Generate build matrix
         id: set-matrix
         shell: bash
+        env:
+          BUILD_TIMESTAMP_INPUT: ${{ github.event.inputs.build_timestamp }}
         run: |
           set -euo pipefail
           echo "::group::Matrix generation"
@@ -173,6 +175,11 @@ jobs:
             )
           ')
           
+          if [ -n "${BUILD_TIMESTAMP_INPUT:-}" ] && [ "$count" -gt 1 ]; then
+            echo "::error::build_timestamp is applied to EVERY device in the run and would override each model's own stock ktimestamp on all $count of them. Narrow the run with op_target_model, or leave build_timestamp empty to use each config's ktimestamp."
+            exit 1
+          fi
+
           if [ "$count" -eq 0 ]; then
             echo "::error::No config files found for op_model='$input' and op_target_model='${target_model:-<empty>}' after applying filters!"
             echo ""
