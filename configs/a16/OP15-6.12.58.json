@@ -1,5 +1,5 @@
 {
-  "model": "OP15-6.12.58-oplus",
+  "model": "OP15-6.12.58",
   "soc": "canoe",
   "branch": "wild/sm8850",
   "manifest": "oneplus_15_6.12.58_oplus_w.xml",
