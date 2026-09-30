@@ -1173,8 +1173,8 @@ runs:
         
         if ! grep -qF 'int proc_dou8vec_minmax(' ./include/linux/sysctl.h; then
           echo "proc_dou8vec_minmax() missing from this tree - applying sysctl backports"
-          for p in sysctl_add_proc_dou8vec_minmax.patch \
-                   sysctl_fix_data-races_in_proc_dou8vec_minmax.patch; do
+          for p in sysctl_add_proc_dou8vec_minmax_pre_5_13.patch \
+                   sysctl_fix_data-races_in_proc_dou8vec_minmax_pre_5_13.patch; do
             if [ ! -f "$BBR3_DIR/$p" ]; then
               echo "::error::BBRv3 needs $p but it is missing from $BBR3_DIR"
               echo "Without it, $ANDROID_VER-$KERNEL_VER cannot compile BBRv3."
