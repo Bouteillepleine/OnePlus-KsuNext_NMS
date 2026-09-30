@@ -910,6 +910,7 @@ runs:
         bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" record-version
         bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" hook
         bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" ghost
+        bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" pathhide
 
     - name: Add BBG
       if: ${{ env.OP_BBG == 'true' }}
