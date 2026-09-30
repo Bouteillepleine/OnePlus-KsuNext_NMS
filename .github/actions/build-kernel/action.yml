@@ -42,10 +42,10 @@ inputs:
     type: boolean
     default: false
   nomount_ref:
-    description: 'NoMount-Suite branch/ref to source the Prism engine src + patches from (default prerelease on this branch; set main to build against the released engine). The engine ships inside the Suite repo, under hookless/.'
+    description: 'NoMount-Suite branch/ref to source the Prism engine src + patches from (default pathhide-netlink on this branch: prerelease plus the pathhide netlink knob and its boot sync). The engine ships inside the Suite repo, under hookless/.'
     required: false
     type: string
-    default: prerelease
+    default: pathhide-netlink
   patches_ref:
     description: 'kernel_patches branch/ref to source the _ghost/_hook/_pathhide cloaks and the apply script from (default Oracle on this branch; set main to build against the released patches)'
     required: false
