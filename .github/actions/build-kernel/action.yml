@@ -47,10 +47,10 @@ inputs:
     type: string
     default: main
   patches_ref:
-    description: 'kernel_patches branch/ref to source the _ghost/_hook/_pathhide cloaks and the apply script from (default main; set a test branch to validate before merge)'
+    description: 'kernel_patches branch/ref to source the _ghost/_hook/_pathhide cloaks and the apply script from (default Oracle on this branch; set main to build against the released patches)'
     required: false
     type: string
-    default: main
+    default: Oracle
   github_token:
     description: 'GitHub Token'
     required: true
