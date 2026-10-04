@@ -1,0 +1,35 @@
+name: Validate configs
+
+on:
+  push:
+    paths:
+      - 'configs/**'
+      - 'manifests/**'
+      - '.github/scripts/validate_configs.py'
+      - '.github/workflows/validate-configs.yml'
+  pull_request:
+    paths:
+      - 'configs/**'
+      - 'manifests/**'
+      - '.github/scripts/validate_configs.py'
+      - '.github/workflows/validate-configs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-configs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate device inventory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v6
+
+      - name: Validate configs and manifests
+        run: python3 .github/scripts/validate_configs.py
