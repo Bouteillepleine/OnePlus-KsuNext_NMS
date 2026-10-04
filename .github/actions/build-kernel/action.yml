@@ -1676,6 +1676,10 @@ runs:
           grep -q "^${sym}=y" "$OUT/.config" \
             || { echo "::error::${sym} was dropped by olddefconfig (not defined by the KSU source?)"; exit 1; }
         done
+
+        if [ "$OP_NMS" = true ]; then
+          bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" assert-config
+        fi
         
         KCFLAGS="$KCFLAGS -Wno-error -pipe ${KCFLAGS_EXTRA}"
         KCPPFLAGS="$KCPPFLAGS -DCONFIG_OPTIMIZE_INLINING"
