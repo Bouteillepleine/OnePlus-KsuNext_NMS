@@ -1146,9 +1146,9 @@ jobs:
           ### Official Manager
           EOF
           cat << EOF >> release_notes.md
-          - **KernelSU Next Manager** *(match the kernel by COMMIT, not just version — see \`KernelSU Next Branch\` in Build Configuration above; the bundled APK's filename carries the same short sha)*
+          - **KernelSU Next Manager** *(match the kernel by COMMIT, not just version — see \`KernelSU Next Branch\` in Build Configuration above)*
             → [GitHub Release](https://github.com/KernelSU-Next/KernelSU-Next/releases)
-          > ⚠️ **Do not let the manager update itself past this kernel.** The version number does not pin the uapi: a manager and a driver can both report the same version and still disagree, which the manager reports as *"Manager uapi version (N) and driver uapi version (M) mismatch"* and root management stops working. Install the APK from **this** release's Assets, and reflash a matching kernel before taking a newer one.
+          > ⚠️ **Do not let the manager update itself past this kernel.** The version number does not pin the uapi: a manager and a driver can both report the same version and still disagree, which the manager reports as *"Manager uapi version (N) and driver uapi version (M) mismatch"* and root management stops working. Install the APK from the manager's own release linked above - this release ships kernels and the Suite, not the manager - and reflash a matching kernel before taking a newer one.
           EOF
           cat << EOF >> release_notes.md
           ### Recommended Flasher
@@ -1167,7 +1167,7 @@ jobs:
           ### Via Kernel Flasher
           1. Download the correct AnyKernel3 ZIP for your device.
           2. Flash the ZIP to the active slot using Kernel Flasher.
-          3. Install the KernelSU Next Manager APK, same version as mentioned in the AnyKernel3 ZIP name.
+          3. Install the KernelSU Next Manager APK, same version as mentioned in the AnyKernel3 ZIP name (download it from the link under **Manager Applications** below - it is not an asset of this release).
           4. Open the KernelSU Next app.
           5. In **KernelSU Next Manager**, install the **NoMount Suite** module (Modules → Install from storage → the NoMount Suite ZIP from this release). Remove any existing metamodule and reboot first if you have one.
           6. Reboot the device.
