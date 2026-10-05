@@ -1232,9 +1232,22 @@ jobs:
 
       - name: 🚀 Create GitHub Release
         run: |
+          # Target the commit that was built, but only while it is still the branch tip.
+          # Creating a tag whose .github/workflows/ differs from the current ones needs the
+          # Workflows permission, which GITHUB_TOKEN can never be granted - GitHub answers
+          # "403 Resource not accessible by integration", which reads like a permissions
+          # problem and is really "this ref would change a workflow file". That happens
+          # whenever a workflow edit lands while a build is running. Fall back to the branch,
+          # whose tip is by definition current, instead of losing the whole release.
+          TARGET="${{ github.sha }}"
+          HEAD_SHA=$(gh api "repos/${{ github.repository }}/commits/${{ github.ref_name }}" --jq .sha 2>/dev/null || true)
+          if [ -n "$HEAD_SHA" ] && [ "$HEAD_SHA" != "${{ github.sha }}" ]; then
+            echo "::warning::${{ github.ref_name }} moved to ${HEAD_SHA} since this run started; tagging the branch instead of ${{ github.sha }}."
+            TARGET="${{ github.ref_name }}"
+          fi
           gh release create "${{ env.NEW_TAG }}" \
             --repo "${{ env.REPO_OWNER }}/${{ env.REPO_NAME }}" \
-            --target "${{ github.sha }}" \
+            --target "$TARGET" \
             --title "${{ env.RELEASE_NAME }}" \
             --notes-file release_notes.md \
             --draft
