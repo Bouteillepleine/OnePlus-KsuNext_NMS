@@ -1937,6 +1937,16 @@ runs:
           exit 1
         fi
 
+        # Same reason as Module.symvers: `make Image` never needs scripts/module.lds, so it
+        # is absent and modfinal cannot link any .ko - it fails with the misleading
+        # "No rule to make target ... .ko, needed by __modfinal".
+        if [ ! -f "$OUT/scripts/module.lds" ]; then
+          make -C "$COMMON_KERNEL_FOLDER" \
+            LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" \
+            O="$OUT" ARCH=arm64 LLVM=1 LLVM_IAS=1 scripts/module.lds
+          echo "generated $OUT/scripts/module.lds"
+        fi
+
         SUSFS_SRC="$GITHUB_WORKSPACE/susfs4ksu-lkm"
         rm -rf "$SUSFS_SRC"
         git clone --depth 1 -b "${{ inputs.susfs_lkm_ref }}" \
