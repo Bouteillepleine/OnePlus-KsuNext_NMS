@@ -1170,6 +1170,28 @@ runs:
         else
           echo "Skipping debugfs/tunables patch for $ANDROID_VER-$KERNEL_VER"
         fi
+
+        # Per-socket ownership of the BBRv3 context.  Keeping struct tcp_sock and
+        # struct rate_sample byte-identical for KMI means the ctx is a heap pointer in
+        # icsk_ca_priv slot 0, and sk_clone_lock() byte-copies that slot - so a child
+        # can inherit the parent's ctx and .release then frees it twice.  Applied last:
+        # it routes tcp_notify_skb_loss_event()'s open-coded slot read through the
+        # guarded accessor and makes 0002's SLAB_TYPESAFE_BY_RCU recycling safe to
+        # observe, so it has to sit on top of both.
+        if [ "$ANDROID_VER" = "android16" ] && [ "$KERNEL_VER" = "6.12" ]; then
+          CTX_PATCH="$BBR3_DIR/0003-net-tcp-bbr3-own-the-private-ctx-per-socket-6.12.patch"
+        else
+          CTX_PATCH="$BBR3_DIR/0003-net-tcp-bbr3-own-the-private-ctx-per-socket-5.10-6.6.patch"
+        fi
+
+        if [ ! -f "$CTX_PATCH" ]; then
+          echo "::error::BBRv3 per-socket ctx ownership patch missing for $ANDROID_VER-$KERNEL_VER"
+          echo "Expected: $CTX_PATCH"
+          exit 1
+        fi
+
+        echo "Applying per-socket ctx ownership patch: $(basename "$CTX_PATCH")"
+        patch -p1 < "$CTX_PATCH"
         
         if ! grep -qF 'int proc_dou8vec_minmax(' ./include/linux/sysctl.h; then
           echo "proc_dou8vec_minmax() missing from this tree - applying sysctl backports"
