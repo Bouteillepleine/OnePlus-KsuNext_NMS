@@ -1994,8 +1994,14 @@ runs:
         echo "--- undefined symbols the loader must absolutize ---"
         nm -u "$KO" | wc -l
 
-        mkdir -p "$ARTIFACTS_FOLDER"
-        cp "$KO" "$ARTIFACTS_FOLDER/susfs_guard_lkm-${OP_MODEL}-${OP_ANDROID_VERSION}-${OP_KERNEL_VERSION}.ko"
+        # NOT $ARTIFACTS_FOLDER: "Create Kernel ZIP" runs
+        #   find "$ARTIFACTS_FOLDER" -maxdepth 1 -type f ! -name "$ZIP_NAME" -delete
+        # which sweeps anything that is not the AK3 zip, so a .ko staged there is gone
+        # before the upload step sees it.  Use a directory of our own.
+        SUSFS_OUT="$GITHUB_WORKSPACE/susfs-ko"
+        mkdir -p "$SUSFS_OUT"
+        cp "$KO" "$SUSFS_OUT/susfs_guard_lkm-${OP_MODEL}-${OP_ANDROID_VERSION}-${OP_KERNEL_VERSION}.ko"
+        echo "SUSFS_KO_DIR=$SUSFS_OUT" >> "$GITHUB_ENV"
         echo "SUSFS_KO_NAME=susfs_guard_lkm-${OP_MODEL}-${OP_ANDROID_VERSION}-${OP_KERNEL_VERSION}.ko" >> "$GITHUB_ENV"
         echo "✅ susfs_guard_lkm.ko built against this kernel"
         echo "::endgroup::"
@@ -2207,10 +2213,11 @@ runs:
       uses: actions/upload-artifact@v7
       with:
         name: ${{ env.SUSFS_KO_NAME }}
-        path: ${{ env.ARTIFACTS_FOLDER }}/${{ env.SUSFS_KO_NAME }}
+        path: ${{ env.SUSFS_KO_DIR }}/${{ env.SUSFS_KO_NAME }}
         archive: false
         compression-level: 0
         retention-days: 90
+        if-no-files-found: error
 
     - name: Upload ccache log
       if: success() && inputs.debug == 'true' && steps.build_kernel_step.conclusion == 'success'
