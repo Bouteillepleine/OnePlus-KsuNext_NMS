@@ -41,6 +41,11 @@ inputs:
     required: false
     type: boolean
     default: false
+  susfs_lkm_ref:
+    description: 'Branch/ref of Bouteillepleine/susfs4ksu-lkm to build susfs_guard_lkm.ko from, against THIS kernel tree. Empty = do not build it. SUSFS is not in the kernel source; this is the loadable-module port, so it must be compiled against the same tree and toolchain as the Image or its struct offsets and kCFI type hashes will not match.'
+    required: false
+    type: string
+    default: ''
   nomount_ref:
     description: 'NoMount-Suite branch/ref to source the Prism engine src + patches from (default main; set a branch to validate it before it is released). The engine ships inside the Suite repo, under hookless/.'
     required: false
@@ -1904,6 +1909,72 @@ runs:
         echo "   - Build time: ${BUILD_TIME}s"
         echo "::endgroup::"
 
+    - name: Build susfs_guard_lkm.ko
+      id: build_susfs_lkm
+      if: inputs.susfs_lkm_ref != ''
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Build susfs_guard_lkm.ko against this kernel"
+
+        OUT="$COMMON_KERNEL_FOLDER/out"
+        if [ ! -f "$OUT/Module.symvers" ]; then
+          echo "::error::$OUT/Module.symvers is missing - the kernel build must run first, or the .ko gets no symbol CRCs and a MODVERSIONS kernel refuses it"
+          exit 1
+        fi
+
+        SUSFS_SRC="$GITHUB_WORKSPACE/susfs4ksu-lkm"
+        rm -rf "$SUSFS_SRC"
+        git clone --depth 1 -b "${{ inputs.susfs_lkm_ref }}" \
+          https://github.com/Bouteillepleine/susfs4ksu-lkm.git "$SUSFS_SRC"
+        echo "susfs source: $(git -C "$SUSFS_SRC" log --oneline -1)"
+
+        export ARCH=arm64 SUBARCH=arm64
+        export LLVM=1 LLVM_IAS=1
+
+        # KBUILD_MODPOST_WARN=1 is REQUIRED, not a shortcut: the module deliberately
+        # references unexported symbols (kallsyms_lookup_name, init_mm, saved_boot_config,
+        # task_work_add, ...) which its userspace loader rewrites to absolute addresses
+        # before init_module(2).  modpost treats those as errors by default.  Downgrading
+        # them does NOT cost the CRCs - modpost still emits __versions entries for every
+        # symbol it CAN resolve from Module.symvers, module_layout included, which is what
+        # this kernel's check_modstruct_version() looks up.
+        make -C "$COMMON_KERNEL_FOLDER" \
+          LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" \
+          O="$OUT" M="$SUSFS_SRC/kernel" \
+          KBUILD_MODPOST_WARN=1 \
+          -j"$(nproc --all)" modules 2>&1 | tee "$GITHUB_WORKSPACE/susfs-build.log" | tail -n 40
+
+        KO="$SUSFS_SRC/kernel/susfs_guard_lkm.ko"
+        if [ ! -f "$KO" ]; then
+          echo "::error::susfs_guard_lkm.ko was not produced"
+          exit 1
+        fi
+
+        echo "--- modinfo ---"
+        modinfo "$KO" 2>/dev/null | grep -E "vermagic|name|description|import_ns" || true
+        echo "--- version sections (must be present, or a MODVERSIONS kernel refuses the load) ---"
+        readelf -SW "$KO" | awk '/__versions|__version_ext/ {print "  "$2" size="$6}'
+        VERS=$(readelf -SW "$KO" | grep -c "__versions" || true)
+        if [ "${VERS:-0}" = "0" ]; then
+          echo "::error::no __versions section - check_modstruct_version() will take the try_to_force_load() path and this kernel has CONFIG_MODULE_FORCE_LOAD off, so the load would be refused with -ENOEXEC"
+          exit 1
+        fi
+        echo "--- module_layout CRC present? ---"
+        if readelf -p __versions "$KO" 2>/dev/null | grep -q module_layout; then
+          echo "  yes - classic __versions carries module_layout"
+        else
+          echo "  not in classic __versions (extended modversions path will be used)"
+        fi
+        echo "--- undefined symbols the loader must absolutize ---"
+        nm -u "$KO" | wc -l
+
+        mkdir -p "$ARTIFACTS_FOLDER"
+        cp "$KO" "$ARTIFACTS_FOLDER/susfs_guard_lkm-${OP_MODEL}-${OP_ANDROID_VERSION}-${OP_KERNEL_VERSION}.ko"
+        echo "SUSFS_KO_NAME=susfs_guard_lkm-${OP_MODEL}-${OP_ANDROID_VERSION}-${OP_KERNEL_VERSION}.ko" >> "$GITHUB_ENV"
+        echo "✅ susfs_guard_lkm.ko built against this kernel"
+        echo "::endgroup::"
+
     - name: Create Kernel ZIP
       id: create_zip
       shell: bash
@@ -2102,6 +2173,16 @@ runs:
       with:
         name: ${{ env.ZIP_NAME }}
         path: ${{ env.ARTIFACTS_FOLDER }}/${{ env.ZIP_NAME }}
+        archive: false
+        compression-level: 0
+        retention-days: 90
+
+    - name: Upload susfs_guard_lkm.ko
+      if: success() && steps.build_susfs_lkm.conclusion == 'success'
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ env.SUSFS_KO_NAME }}
+        path: ${{ env.ARTIFACTS_FOLDER }}/${{ env.SUSFS_KO_NAME }}
         archive: false
         compression-level: 0
         retention-days: 90
