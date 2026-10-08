@@ -1918,8 +1918,22 @@ runs:
         echo "::group::Build susfs_guard_lkm.ko against this kernel"
 
         OUT="$COMMON_KERNEL_FOLDER/out"
+
+        # A normal (debug=false) build runs `make Image` only, so it stops after
+        # `MODPOST vmlinux.symvers` and never writes Module.symvers - that one is a
+        # `make modules` artifact.  vmlinux.symvers already lists every EXPORT_SYMBOL of
+        # this vmlinux with its CRC, module_layout included, which is precisely what an
+        # out-of-tree modpost reads, so seed it rather than forcing a modules build.
+        if [ ! -f "$OUT/Module.symvers" ] && [ -f "$OUT/vmlinux.symvers" ]; then
+          cp "$OUT/vmlinux.symvers" "$OUT/Module.symvers"
+          echo "seeded Module.symvers from vmlinux.symvers ($(wc -l < "$OUT/Module.symvers") symbols)"
+        fi
         if [ ! -f "$OUT/Module.symvers" ]; then
-          echo "::error::$OUT/Module.symvers is missing - the kernel build must run first, or the .ko gets no symbol CRCs and a MODVERSIONS kernel refuses it"
+          echo "::error::neither Module.symvers nor vmlinux.symvers exists in $OUT - without kernel symbol CRCs the .ko gets no __versions and a CONFIG_MODVERSIONS kernel refuses it"
+          exit 1
+        fi
+        if ! grep -q "	module_layout	" "$OUT/Module.symvers"; then
+          echo "::error::module_layout has no CRC in $OUT/Module.symvers - that is the one symbol check_modstruct_version() looks up, so the load would fail"
           exit 1
         fi
 
