@@ -1295,8 +1295,23 @@ jobs:
           # manager is the "Manager uapi version (N) and driver uapi version (M) mismatch"
           # this release's own notes warn about, so ship nothing rather than a wrong pair.
           MGR_BUILD="${MGR_TAG#manager-}"
-          if [ -n "${KSU_VER:-}" ] && [ "$MGR_BUILD" != "$KSU_VER" ]; then
-            echo "::warning::$MGR_TAG does not match the built driver (v${KSU_VER}) - not attaching it. Re-mirror the manager for ${KSU_VER}."
+          # KSU_VER comes from needs.build.outputs.ksu_ver, which is always empty: the job
+          # maps steps.build-stat.outputs.ksu_version while the step writes ksu_ver. The
+          # old guard was `[ -n "$KSU_VER" ] && ...`, so an empty value skipped the check
+          # entirely and a manager 9 builds behind the driver shipped anyway - measured on
+          # a full release. Read the number from the AK3 zips this release actually carries,
+          # and refuse to attach anything when even that cannot be determined.
+          DRIVER_VER="${KSU_VER:-}"
+          if [ -z "$DRIVER_VER" ]; then
+            DRIVER_VER=$(ls ./downloaded-artifacts/AK3_*.zip 2>/dev/null | head -1 \
+              | sed -E 's/.*_([0-9]+)\.zip$/\1/')
+          fi
+          if [ -z "$DRIVER_VER" ]; then
+            echo "::warning::could not determine which driver build this release carries - not attaching any manager APK."
+            exit 0
+          fi
+          if [ "$MGR_BUILD" != "$DRIVER_VER" ]; then
+            echo "::warning::$MGR_TAG does not match the driver this release carries ($DRIVER_VER) - not attaching it. Cut a manager-$DRIVER_VER release."
             exit 0
           fi
           mkdir -p managers
