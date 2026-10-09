@@ -131,8 +131,7 @@ runs:
         set -euo pipefail
 
         if [ "${{ inputs.ksu_type }}" != "KSUN" ]; then
-          echo "::error::This action only supports KSUN/KernelSU Next. Got: ${{ inputs.ksu_type }}"
-          exit 1
+          susfs_bail "This action only supports KSUN/KernelSU Next. Got: ${{ inputs.ksu_type }}"
         fi
 
         echo "✅ KSU type validated: ${{ inputs.ksu_type }}"
@@ -325,8 +324,7 @@ runs:
           for error in "${errors[@]}"; do
             echo "  - $error" >&2
           done
-          echo "::error::Input validation failed. See logs for details."
-          exit 1
+          susfs_bail "Input validation failed. See logs for details."
         else
           echo "✅ Input validation passed"
         fi
@@ -423,8 +421,7 @@ runs:
         ANDROID_VERSION="${BRANCH_VALUE%-*}"
         
         if [ -z "$ANDROID_VERSION" ]; then
-          echo "::error::Could not parse android version from BRANCH=$BRANCH_VALUE"
-          exit 1
+          susfs_bail "Could not parse android version from BRANCH=$BRANCH_VALUE"
         fi
         
         VERSION=$(grep '^VERSION *=' Makefile | awk '{print $3}')
@@ -812,8 +809,7 @@ runs:
 
         SCRIPT_SIZE="$(stat -c%s "$KSUN_SETUP_SCRIPT")"
         if [ "$SCRIPT_SIZE" -lt 512 ]; then
-          echo "::error::Downloaded setup.sh is suspiciously small (${SCRIPT_SIZE} bytes). Aborting."
-          exit 1
+          susfs_bail "Downloaded setup.sh is suspiciously small (${SCRIPT_SIZE} bytes). Aborting."
         fi
 
         if ! head -n1 "$KSUN_SETUP_SCRIPT" | grep -q '^#!'; then
@@ -1917,6 +1913,16 @@ runs:
         set -euo pipefail
         echo "::group::Build susfs_guard_lkm.ko against this kernel"
 
+        # The module is optional; the kernel is not.  A composite action cannot carry
+        # continue-on-error per step, so every bail below goes through this: it annotates
+        # loudly, records why for the summary, and exits 0 so the Image still ships.
+        susfs_bail() {
+          echo "::error::susfs_guard_lkm.ko NOT produced - $1"
+          echo "SUSFS_KO_STATUS=failed: $1" >> "$GITHUB_ENV"
+          echo "::endgroup::"
+          exit 0
+        }
+
         OUT="$COMMON_KERNEL_FOLDER/out"
 
         # A normal (debug=false) build runs `make Image` only, so it stops after
@@ -1978,6 +1984,17 @@ runs:
 
         echo "--- modinfo ---"
         modinfo "$KO" 2>/dev/null | grep -E "vermagic|name|description|import_ns" || true
+        # (1) Everything else proves the module is LOADABLE; nothing proved it belongs to
+        # THIS kernel.  Three builders emit the same release string with different struct
+        # layouts, so compare against the release this build itself produced.
+        REL_FILE="$OUT/include/config/kernel.release"
+        [ -f "$REL_FILE" ] || susfs_bail "$REL_FILE is missing, so the module cannot be proven to match this kernel"
+        KREL=$(tr -d ' \r\n' < "$REL_FILE")
+        KOVM=$(modinfo "$KO" 2>/dev/null | sed -n 's/^vermagic: *//p' | awk '{print $1}')
+        [ -n "$KOVM" ] || susfs_bail "the module carries no vermagic"
+        [ "$KOVM" = "$KREL" ] || susfs_bail "vermagic mismatch - module says '$KOVM', this kernel is '$KREL'"
+        echo "--- vermagic matches this kernel: $KREL ---"
+
         echo "--- version sections (must be present, or a MODVERSIONS kernel refuses the load) ---"
         readelf -SW "$KO" | awk '/__versions|__version_ext/ {print "  "$2" size="$6}'
         VERS=$(readelf -SW "$KO" | grep -c "__versions" || true)
@@ -2003,7 +2020,67 @@ runs:
         cp "$KO" "$SUSFS_OUT/susfs_guard_lkm-${OP_MODEL}-${OP_ANDROID_VERSION}-${OP_KERNEL_VERSION}.ko"
         echo "SUSFS_KO_DIR=$SUSFS_OUT" >> "$GITHUB_ENV"
         echo "SUSFS_KO_NAME=susfs_guard_lkm-${OP_MODEL}-${OP_ANDROID_VERSION}-${OP_KERNEL_VERSION}.ko" >> "$GITHUB_ENV"
-        echo "✅ susfs_guard_lkm.ko built against this kernel"
+
+        # (3) A loose .ko beside an AK3 zip invites pairing the wrong two. Ship an
+        # installable module, and (4) have it refuse at runtime on any other kernel -
+        # the check that actually prevents the mistake, unlike a filename.
+        MODDIR="$GITHUB_WORKSPACE/susfs-module"
+        rm -rf "$MODDIR"; mkdir -p "$MODDIR"
+        cp "$KO" "$MODDIR/susfs_guard_lkm.ko"
+        {
+          echo "id=susfs_guard"
+          echo "name=SUSFS Guard (${OP_MODEL})"
+          echo "version=${KREL}"
+          echo "versionCode=$(date -u +%Y%m%d%H%M)"
+          echo "author=XxxY"
+          echo "description=[ built for ${KREL} ] Loads susfs_guard_lkm.ko at boot. Refuses to load on any other kernel."
+        } > "$MODDIR/module.prop"
+        cat > "$MODDIR/post-fs-data.sh" <<'SUSFS_PFD'
+        #!/system/bin/sh
+        # Loads the susfs module built alongside THIS kernel.
+        MODDIR=${0%/*}
+        KREL_BUILT=$(sed -n 's/^version=//p' "$MODDIR/module.prop" | head -1)
+        LOG=$MODDIR/load.log
+        echo "susfs_guard: running on $(uname -r), built for $KREL_BUILT" > "$LOG"
+
+        # The reason the module ships with its kernel: a vermagic match is not proof of a
+        # struct-layout match when several builders emit the same release string.
+        if [ "$(uname -r)" != "$KREL_BUILT" ]; then
+            echo "susfs_guard: kernel mismatch - refusing to load" >> "$LOG"
+            exit 0
+        fi
+
+        # Armed before insmod and synced: a module that panics inside insmod takes the page
+        # cache with it, and an unsynced marker would be lost.
+        PENDING=$MODDIR/boot_pending
+        if [ -f "$PENDING" ]; then
+            rm -f "$PENDING"; sync
+            echo "susfs_guard: previous boot did not complete after loading - staying out" >> "$LOG"
+            exit 0
+        fi
+        touch "$PENDING"; sync
+
+        KSUD=/data/adb/ksu/bin/ksud
+        [ -x "$KSUD" ] || KSUD=$(command -v ksud)
+        [ -n "$KSUD" ] || { echo "susfs_guard: ksud not found" >> "$LOG"; rm -f "$PENDING"; exit 0; }
+        "$KSUD" insmod "$MODDIR/susfs_guard_lkm.ko" >> "$LOG" 2>&1
+        echo "susfs_guard: insmod exit $?" >> "$LOG"
+        exit 0
+        SUSFS_PFD
+        cat > "$MODDIR/boot-completed.sh" <<'SUSFS_BC'
+        #!/system/bin/sh
+        rm -f "${0%/*}/boot_pending"
+        sync
+        exit 0
+        SUSFS_BC
+        chmod 755 "$MODDIR/post-fs-data.sh" "$MODDIR/boot-completed.sh"
+        MODZIP="$SUSFS_OUT/susfs_guard-${OP_MODEL}-${KREL}.zip"
+        (cd "$MODDIR" && zip -qr9 "$MODZIP" .)
+        (cd "$SUSFS_OUT" && sha256sum ./* > sha256sums.txt)
+        echo "SUSFS_MODULE_ZIP=$(basename "$MODZIP")" >> "$GITHUB_ENV"
+        echo "SUSFS_KO_STATUS=ok ($KREL)" >> "$GITHUB_ENV"
+        echo "--- shipped ---"; ls -l "$SUSFS_OUT" | sed 's/^/  /'
+        echo "✅ built against this kernel and packaged as $(basename "$MODZIP")"
         echo "::endgroup::"
 
     - name: Create Kernel ZIP
@@ -2208,12 +2285,28 @@ runs:
         compression-level: 0
         retention-days: 90
 
+    # The step now exits 0 even when it bails, so its conclusion is always 'success' and
+    # cannot gate these.  SUSFS_KO_NAME / SUSFS_MODULE_ZIP are written only on the success
+    # path, so their presence is the real signal.
     - name: Upload susfs_guard_lkm.ko
-      if: success() && steps.build_susfs_lkm.conclusion == 'success'
+      if: env.SUSFS_KO_NAME != ''
       uses: actions/upload-artifact@v7
       with:
         name: ${{ env.SUSFS_KO_NAME }}
         path: ${{ env.SUSFS_KO_DIR }}/${{ env.SUSFS_KO_NAME }}
+        archive: false
+        compression-level: 0
+        retention-days: 90
+        if-no-files-found: error
+
+    # Its own artifact, named *.zip, so the release job's `for file in *.zip` loop ships it
+    # without the release workflow needing to know susfs exists.
+    - name: Upload the installable SUSFS module
+      if: env.SUSFS_MODULE_ZIP != ''
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ env.SUSFS_MODULE_ZIP }}
+        path: ${{ env.SUSFS_KO_DIR }}/${{ env.SUSFS_MODULE_ZIP }}
         archive: false
         compression-level: 0
         retention-days: 90

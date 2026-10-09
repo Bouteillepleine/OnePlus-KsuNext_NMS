@@ -75,10 +75,10 @@ on:
         type: boolean
         default: false
       susfs_lkm_ref:
-        description: 'Build susfs_guard_lkm.ko from this branch of Bouteillepleine/susfs4ksu-lkm, against the same tree and toolchain as the kernel. Empty = skip.'
+        description: 'Branch/tag/SHA of Bouteillepleine/susfs4ksu-lkm to build susfs_guard_lkm.ko from, against the same tree and toolchain as the kernel. Empty = skip. A branch moves, so a release you want to reproduce should pass a tag or SHA.'
         required: false
         type: string
-        default: ''
+        default: 'dev2'
       nomount_ref:
         description: 'NoMount-Suite branch/ref for the Prism engine src + patches (default main; set a branch to validate it before it is released). The engine ships inside the Suite repo, under hookless/.'
         required: false
