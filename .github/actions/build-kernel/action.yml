@@ -2021,9 +2021,16 @@ runs:
         echo "SUSFS_KO_DIR=$SUSFS_OUT" >> "$GITHUB_ENV"
         echo "SUSFS_KO_NAME=susfs_guard_lkm-${OP_MODEL}-${OP_ANDROID_VERSION}-${OP_KERNEL_VERSION}.ko" >> "$GITHUB_ENV"
 
-        # (3) A loose .ko beside an AK3 zip invites pairing the wrong two. Ship an
-        # installable module, and (4) have it refuse at runtime on any other kernel -
-        # the check that actually prevents the mistake, unlike a filename.
+        # (3) A loose .ko beside an AK3 zip invites pairing the wrong two, so ship an
+        # installable module instead.  (4) The module then refuses to load on a kernel
+        # whose release string differs from the one it was built against.
+        #
+        # That guard catches the wrong KERNEL VERSION, not the wrong BUILDER: all three
+        # builders emit the same release string, so uname(2) cannot tell them apart.  The
+        # real cross-builder protection is MODVERSIONS, which the checks above already
+        # prove is in place - check_modstruct_version() compares module_layout's CRC, so a
+        # genuinely incompatible kernel refuses the load, and a kernel whose CRCs match is
+        # ABI-compatible by definition.  The uname check is a friendlier early-out.
         MODDIR="$GITHUB_WORKSPACE/susfs-module"
         rm -rf "$MODDIR"; mkdir -p "$MODDIR"
         cp "$KO" "$MODDIR/susfs_guard_lkm.ko"
@@ -2074,7 +2081,8 @@ runs:
         exit 0
         SUSFS_BC
         chmod 755 "$MODDIR/post-fs-data.sh" "$MODDIR/boot-completed.sh"
-        MODZIP="$SUSFS_OUT/susfs_guard-${OP_MODEL}-${KREL}.zip"
+        KOSHA=$(sha256sum "$KO" | cut -c1-8)
+        MODZIP="$SUSFS_OUT/susfs_guard-${OP_MODEL}-${KOSHA}.zip"
         (cd "$MODDIR" && zip -qr9 "$MODZIP" .)
         (cd "$SUSFS_OUT" && sha256sum ./* > sha256sums.txt)
         echo "SUSFS_MODULE_ZIP=$(basename "$MODZIP")" >> "$GITHUB_ENV"
