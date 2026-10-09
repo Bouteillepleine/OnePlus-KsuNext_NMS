@@ -2050,8 +2050,9 @@ runs:
         LOG=$MODDIR/load.log
         echo "susfs_guard: running on $(uname -r), built for $KREL_BUILT" > "$LOG"
 
-        # The reason the module ships with its kernel: a vermagic match is not proof of a
-        # struct-layout match when several builders emit the same release string.
+        # Early-out on an obviously wrong kernel. This is NOT the ABI guard - MODVERSIONS
+        # is, and insmod applies it - but it fails fast and says why, in a readable log.
+        # All three builders emit the same release string, so this cannot tell them apart.
         if [ "$(uname -r)" != "$KREL_BUILT" ]; then
             echo "susfs_guard: kernel mismatch - refusing to load" >> "$LOG"
             exit 0
