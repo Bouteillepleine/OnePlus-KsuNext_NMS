@@ -1952,7 +1952,7 @@ runs:
         if [ ! -f "$OUT/scripts/module.lds" ]; then
           make -C "$COMMON_KERNEL_FOLDER" \
             LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" \
-            O="$OUT" ARCH=arm64 LLVM=1 LLVM_IAS=1 modules_prepare
+            O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 modules_prepare
           echo "generated $OUT/scripts/module.lds via modules_prepare"
         fi
 
@@ -1964,6 +1964,12 @@ runs:
 
         export ARCH=arm64 SUBARCH=arm64
         export LLVM=1 LLVM_IAS=1
+        # CROSS_COMPILE matters on 5.10 and nowhere else: that Makefile builds clang's
+        # --target from it, so without it clang compiles arm64 headers for the HOST and
+        # every atomic_lse.h asm dies with "unknown register name 'x0'". 5.15 and newer
+        # derive the target from ARCH, which is why only android12-5.10 failed. Same
+        # value the kernel's own build exports.
+        export CROSS_COMPILE=aarch64-linux-gnu-
 
         # KBUILD_MODPOST_WARN=1 is REQUIRED, not a shortcut: the module deliberately
         # references unexported symbols (kallsyms_lookup_name, init_mm, saved_boot_config,
