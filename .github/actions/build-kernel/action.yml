@@ -2049,7 +2049,8 @@ runs:
         fi
         
         if [ ! -f "$IMAGE_PATH" ]; then
-          susfs_bail "Built Image not found at: $IMAGE_PATH"
+          echo "::error::Built Image not found at: $IMAGE_PATH"
+          exit 1
         fi
         
         cp "$IMAGE_PATH" "$AK3_FOLDER/Image"
@@ -2070,7 +2071,8 @@ runs:
              -x "*.git*" \
              -x "$ZIP_NAME" \
              -x "README.md" 2>&1 | tee /tmp/zip.log; then
-          susfs_bail "Failed to create ZIP package"
+          echo "::error::Failed to create ZIP package"
+          exit 1
         fi
         
         mv "$ZIP_NAME" "$ARTIFACTS_FOLDER/"
