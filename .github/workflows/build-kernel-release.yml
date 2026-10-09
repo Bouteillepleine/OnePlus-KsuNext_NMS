@@ -819,6 +819,56 @@ jobs:
             echo "MOD_MIRRORED=$MOD_MIRRORED"
           } >> "$GITHUB_ENV"
 
+      - name: 📦 Pack the kernel module loader into this release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # The loader lives as SOURCE on a branch, not as a released zip: a prebuilt
+          # artifact committed to a branch goes stale the moment the source moves. Zip it
+          # here so what ships always matches what is committed.
+          #
+          # Best-effort throughout: a release must not fail because an add-on could not be
+          # fetched, so every step is guarded and the worst case is a release without it.
+          LOADER_REPO="Bouteillepleine/kbuild"
+          LOADER_REF="loader"
+          LOADER_DIR="$RUNNER_TEMP/loader"
+          rm -rf "$LOADER_DIR"; mkdir -p "$LOADER_DIR"
+          LOADER_SHIPPED=false
+          LOADER_ASSET=""
+
+          if curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 15 \
+               -H "Authorization: Bearer $GH_TOKEN" \
+               "https://api.github.com/repos/${LOADER_REPO}/tarball/${LOADER_REF}" \
+               -o "$LOADER_DIR/src.tar.gz" 2>/dev/null && [ -s "$LOADER_DIR/src.tar.gz" ]; then
+            # --strip-components=1: the tarball wraps everything in a <owner>-<repo>-<sha>
+            # directory, and a KernelSU module needs module.prop at the ZIP ROOT.
+            tar -xzf "$LOADER_DIR/src.tar.gz" -C "$LOADER_DIR" --strip-components=1 2>/dev/null || true
+            rm -f "$LOADER_DIR/src.tar.gz"
+          fi
+
+          if [ -f "$LOADER_DIR/module.prop" ]; then
+            LOADER_VER=$(awk -F= '/^version=/{print $2}' "$LOADER_DIR/module.prop" | head -1 | tr -d ' \r')
+            LOADER_ASSET="00_Loader-Module-v${LOADER_VER#v}.zip"
+            if (cd "$LOADER_DIR" && zip -qr9 "$GITHUB_WORKSPACE/downloaded-artifacts/${LOADER_ASSET}" . -x "*.git*") \
+               && unzip -tqq "./downloaded-artifacts/${LOADER_ASSET}" 2>/dev/null; then
+              LOADER_SHIPPED=true
+              echo "✅ packed $LOADER_ASSET from ${LOADER_REPO}@${LOADER_REF} ($(stat -c%s "./downloaded-artifacts/${LOADER_ASSET}") bytes)"
+            else
+              rm -f "./downloaded-artifacts/${LOADER_ASSET}"
+              echo "::warning::Could not pack the loader from ${LOADER_REPO}@${LOADER_REF}; this release ships without it."
+            fi
+          else
+            echo "::warning::${LOADER_REPO}@${LOADER_REF} has no module.prop; this release ships without the loader."
+          fi
+
+          {
+            echo "LOADER_REPO=$LOADER_REPO"
+            echo "LOADER_REF=$LOADER_REF"
+            echo "LOADER_ASSET=$LOADER_ASSET"
+            echo "LOADER_SHIPPED=$LOADER_SHIPPED"
+          } >> "$GITHUB_ENV"
+
       - name: 🔐 Generate Checksums
         shell: bash
         run: |
@@ -989,6 +1039,24 @@ jobs:
 
           > _This copy of the Suite is pinned to \`$MOD_VER\` and does not update itself. The [NoMount project's own release](${{ github.server_url }}/${MOD_REPO}/releases/latest) is always current, and once installed the Suite offers its own in-app update._
           > _One metamodule at a time: remove any existing metamodule and reboot before installing this one._
+          EOF
+
+          # Only when the loader actually made it into the Assets: a release that tells
+          # people to install something it does not ship is worse than saying nothing.
+          if [ "${LOADER_SHIPPED:-false}" = "true" ]; then
+          cat << EOF >> release_notes.md
+
+          ## 🧷 Optional — SUSFS
+
+          Every kernel zip above also carries \`susfs_guard_lkm.ko\`, compiled against that exact
+          kernel and inert unless something loads it. Flashing the kernel drops the module into
+          \`Download\`; installing \`$LOADER_ASSET\` then adopts it and loads it at every boot.
+
+          > Built per kernel on purpose: a module from another device, or another builder, will
+          > not load. Nothing here changes a kernel that you do not install the loader on.
+          EOF
+          fi
+          cat << EOF >> release_notes.md
 
           ---
 
