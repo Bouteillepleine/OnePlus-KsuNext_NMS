@@ -1972,11 +1972,18 @@ runs:
         # them does NOT cost the CRCs - modpost still emits __versions entries for every
         # symbol it CAN resolve from Module.symvers, module_layout included, which is what
         # this kernel's check_modstruct_version() looks up.
-        make -C "$COMMON_KERNEL_FOLDER" \
-          LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" \
-          O="$OUT" M="$SUSFS_SRC/kernel" \
-          KBUILD_MODPOST_WARN=1 \
-          -j"$(nproc --all)" modules 2>&1 | tee "$GITHUB_WORKSPACE/susfs-build.log" | tail -n 40
+        # The compile is the likeliest thing to fail on a kernel the module has never been
+        # built against - measured on MediaTek trees, where every atomic_lse.h asm fails
+        # because the module build never targets aarch64 there. Everything AFTER make was
+        # guarded and make itself was not, so one unbuildable device failed its whole
+        # kernel. Guard it too: the Image still ships, without the module.
+        if ! make -C "$COMMON_KERNEL_FOLDER" \
+             LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" \
+             O="$OUT" M="$SUSFS_SRC/kernel" \
+             KBUILD_MODPOST_WARN=1 \
+             -j"$(nproc --all)" modules 2>&1 | tee "$GITHUB_WORKSPACE/susfs-build.log" | tail -n 40; then
+          susfs_bail "the module did not compile against this kernel - see susfs-build.log"
+        fi
 
         KO="$SUSFS_SRC/kernel/susfs_guard_lkm.ko"
         if [ ! -f "$KO" ]; then
