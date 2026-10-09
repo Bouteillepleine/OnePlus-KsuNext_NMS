@@ -34,6 +34,16 @@ Every release contains **two things**. Flash the kernel first, then add NoMount 
 > [!IMPORTANT]
 > **The kernel on its own does nothing visible.** NoMount is *compiled in* but stays **dormant** until the **NoMount Suite** module activates it. NoMount Suite is the part that carries your injection rules, the WebUI, and the spoofing — think of it like a Magisk/KSU module. **You need both.**
 
+## 🧷 Optional — SUSFS
+
+Every kernel ZIP also carries `susfs_guard_lkm.ko`, built against that exact kernel and
+inert unless something loads it. Flashing the kernel drops it into `Download`; installing
+`00_Loader-Module-vX.Y.zip` (also in the Assets) picks it up and loads it at every boot.
+
+> [!NOTE]
+> Optional — skip it and nothing changes. One module per kernel: it will not load on a
+> build it was not compiled against, by design.
+
 ---
 
 ## 🫥 Why NoMount?
