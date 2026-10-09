@@ -1052,8 +1052,9 @@ jobs:
           kernel and inert unless something loads it. Flashing the kernel drops the module into
           \`Download\`; installing \`$LOADER_ASSET\` then adopts it and loads it at every boot.
 
-          > Built per kernel on purpose: a module from another device, or another builder, will
-          > not load. Nothing here changes a kernel that you do not install the loader on.
+          > **How it works:** the loader is a KernelSU module that loads a \`.ko\` at boot. Flashing
+          > the kernel drops \`susfs_guard_lkm.ko\` into \`Download\`; installing the loader picks it up
+          > and loads it on every boot, with bootloop protection if it ever misbehaves.
           EOF
           fi
           cat << EOF >> release_notes.md
