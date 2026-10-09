@@ -131,7 +131,8 @@ runs:
         set -euo pipefail
 
         if [ "${{ inputs.ksu_type }}" != "KSUN" ]; then
-          susfs_bail "This action only supports KSUN/KernelSU Next. Got: ${{ inputs.ksu_type }}"
+          echo "::error::This action only supports KSUN/KernelSU Next. Got: ${{ inputs.ksu_type }}"
+          exit 1
         fi
 
         echo "✅ KSU type validated: ${{ inputs.ksu_type }}"
@@ -324,7 +325,8 @@ runs:
           for error in "${errors[@]}"; do
             echo "  - $error" >&2
           done
-          susfs_bail "Input validation failed. See logs for details."
+          echo "::error::Input validation failed. See logs for details."
+          exit 1
         else
           echo "✅ Input validation passed"
         fi
@@ -421,7 +423,8 @@ runs:
         ANDROID_VERSION="${BRANCH_VALUE%-*}"
         
         if [ -z "$ANDROID_VERSION" ]; then
-          susfs_bail "Could not parse android version from BRANCH=$BRANCH_VALUE"
+          echo "::error::Could not parse android version from BRANCH=$BRANCH_VALUE"
+          exit 1
         fi
         
         VERSION=$(grep '^VERSION *=' Makefile | awk '{print $3}')
@@ -809,7 +812,8 @@ runs:
 
         SCRIPT_SIZE="$(stat -c%s "$KSUN_SETUP_SCRIPT")"
         if [ "$SCRIPT_SIZE" -lt 512 ]; then
-          susfs_bail "Downloaded setup.sh is suspiciously small (${SCRIPT_SIZE} bytes). Aborting."
+          echo "::error::Downloaded setup.sh is suspiciously small (${SCRIPT_SIZE} bytes). Aborting."
+          exit 1
         fi
 
         if ! head -n1 "$KSUN_SETUP_SCRIPT" | grep -q '^#!'; then
