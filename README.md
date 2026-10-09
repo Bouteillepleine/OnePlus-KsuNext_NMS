@@ -178,6 +178,7 @@ Any and all donations are appreciated!
 - **KernelSU Next** — the root solution
 - **AnyKernel3** by osm0sis and contributors
 - **[WildKernels/OnePlus_KernelSU_SUSFS](https://github.com/WildKernels/OnePlus_KernelSU_SUSFS)** — the excellent OnePlus build framework this is forked from
+- **[inforcqb/susfs4ksu-lkm](https://github.com/inforcqb/susfs4ksu-lkm)** — SUSFS as a loadable module, which is what each kernel here carries
 - **OnePlusOSS** — kernel source
 - Community testers and contributors
 ---
