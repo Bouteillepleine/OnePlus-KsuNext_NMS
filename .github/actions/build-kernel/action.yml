@@ -1939,12 +1939,10 @@ runs:
           echo "seeded Module.symvers from vmlinux.symvers ($(wc -l < "$OUT/Module.symvers") symbols)"
         fi
         if [ ! -f "$OUT/Module.symvers" ]; then
-          echo "::error::neither Module.symvers nor vmlinux.symvers exists in $OUT - without kernel symbol CRCs the .ko gets no __versions and a CONFIG_MODVERSIONS kernel refuses it"
-          exit 1
+          susfs_bail "neither Module.symvers nor vmlinux.symvers exists in $OUT - without kernel symbol CRCs the .ko gets no __versions and a CONFIG_MODVERSIONS kernel refuses it"
         fi
         if ! grep -q "	module_layout	" "$OUT/Module.symvers"; then
-          echo "::error::module_layout has no CRC in $OUT/Module.symvers - that is the one symbol check_modstruct_version() looks up, so the load would fail"
-          exit 1
+          susfs_bail "module_layout has no CRC in $OUT/Module.symvers - that is the one symbol check_modstruct_version() looks up, so the load would fail"
         fi
 
         # Same reason as Module.symvers: `make Image` never needs scripts/module.lds, so it
@@ -1982,8 +1980,7 @@ runs:
 
         KO="$SUSFS_SRC/kernel/susfs_guard_lkm.ko"
         if [ ! -f "$KO" ]; then
-          echo "::error::susfs_guard_lkm.ko was not produced"
-          exit 1
+          susfs_bail "susfs_guard_lkm.ko was not produced"
         fi
 
         echo "--- modinfo ---"
@@ -2003,8 +2000,7 @@ runs:
         readelf -SW "$KO" | awk '/__versions|__version_ext/ {print "  "$2" size="$6}'
         VERS=$(readelf -SW "$KO" | grep -c "__versions" || true)
         if [ "${VERS:-0}" = "0" ]; then
-          echo "::error::no __versions section - check_modstruct_version() will take the try_to_force_load() path and this kernel has CONFIG_MODULE_FORCE_LOAD off, so the load would be refused with -ENOEXEC"
-          exit 1
+          susfs_bail "no __versions section - check_modstruct_version() will take the try_to_force_load() path and this kernel has CONFIG_MODULE_FORCE_LOAD off, so the load would be refused with -ENOEXEC"
         fi
         echo "--- module_layout CRC present? ---"
         if readelf -p __versions "$KO" 2>/dev/null | grep -q module_layout; then
@@ -2053,8 +2049,7 @@ runs:
         fi
         
         if [ ! -f "$IMAGE_PATH" ]; then
-          echo "::error::Built Image not found at: $IMAGE_PATH"
-          exit 1
+          susfs_bail "Built Image not found at: $IMAGE_PATH"
         fi
         
         cp "$IMAGE_PATH" "$AK3_FOLDER/Image"
@@ -2075,8 +2070,7 @@ runs:
              -x "*.git*" \
              -x "$ZIP_NAME" \
              -x "README.md" 2>&1 | tee /tmp/zip.log; then
-          echo "::error::Failed to create ZIP package"
-          exit 1
+          susfs_bail "Failed to create ZIP package"
         fi
         
         mv "$ZIP_NAME" "$ARTIFACTS_FOLDER/"
