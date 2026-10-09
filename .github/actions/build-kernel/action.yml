@@ -1973,10 +1973,12 @@ runs:
         # symbol it CAN resolve from Module.symvers, module_layout included, which is what
         # this kernel's check_modstruct_version() looks up.
         # The compile is the likeliest thing to fail on a kernel the module has never been
-        # built against - measured on MediaTek trees, where every atomic_lse.h asm fails
-        # because the module build never targets aarch64 there. Everything AFTER make was
-        # guarded and make itself was not, so one unbuildable device failed its whole
-        # kernel. Guard it too: the Image still ships, without the module.
+        # built against. Measured across a full A16 matrix: every android12-5.10 device
+        # fails here with "unknown register name 'x0' in asm" through atomic_lse.h - the
+        # module build is not targeting aarch64 on those trees - while 5.15, 6.1, 6.6 and
+        # 6.12 all build clean. Everything AFTER make was guarded and make itself was not,
+        # so one unbuildable device failed its whole kernel and blocked the release.
+        # Guard it too: the Image still ships, just without the module.
         if ! make -C "$COMMON_KERNEL_FOLDER" \
              LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" \
              O="$OUT" M="$SUSFS_SRC/kernel" \
