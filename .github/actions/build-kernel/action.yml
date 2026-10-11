@@ -1717,7 +1717,9 @@ runs:
             || { echo "::error::${sym} was dropped by olddefconfig (not defined by the KSU source?)"; exit 1; }
         done
 
-        if [ "$OP_NMS" = true ]; then
+        # Skipped under nomount_lkm: the engine is built out-of-tree in that mode, so the
+        # kernel has no CONFIG_NOMOUNT to assert and this check would fail by design.
+        if [ "$OP_NMS" = true ] && [ "${{ inputs.nomount_lkm }}" != true ]; then
           bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" assert-config
         fi
         
@@ -2233,8 +2235,10 @@ runs:
           echo "Build Host: ${{ env.BUILD_HOST }}"
           echo "KernelSU Next Version: ${KSUVER:-unknown}"
           echo "KernelSU Next commit SHA: ${KSU_SHA:-unknown}"
-          if [ "${{ env.OP_NMS }}" = true ]; then
+          if [ "${{ env.OP_NMS }}" = true ] && [ "${{ inputs.nomount_lkm }}" != true ]; then
             echo "NoMount Version: ${NMVER:-unknown}"
+          elif [ "${{ inputs.nomount_lkm }}" = true ]; then
+            echo "NoMount: NOT in this kernel - built out-of-tree as nomount.ko (experiment)"
           fi
           echo "Optimization: ${{ inputs.optimize_level }}"
           echo "Clean Build: ${{ inputs.clean }}"
@@ -2267,7 +2271,11 @@ runs:
         
         SUM_HEAD="🎯 <b>${{ env.OP_MODEL }}</b> — ${{ steps.save_metadata.outputs.kernel_version }}"
         SUM_HEAD="${SUM_HEAD} · ⚡KernelSU Next ${KSUVER:-?}"
-        if [ "${{ env.OP_NMS }}" = true ]; then SUM_HEAD="${SUM_HEAD} · NoMount ${NMVER:-?}"; fi
+        if [ "${{ env.OP_NMS }}" = true ] && [ "${{ inputs.nomount_lkm }}" != true ]; then
+          SUM_HEAD="${SUM_HEAD} · NoMount ${NMVER:-?}"
+        elif [ "${{ inputs.nomount_lkm }}" = true ]; then
+          SUM_HEAD="${SUM_HEAD} · NoMount=LKM (not in the Image)"
+        fi
         SUM_HEAD="${SUM_HEAD} · ⏱ ${{ steps.collect_stats.outputs.build_time }}s"
         if [ "${{ steps.collect_stats.outputs.warnings_count }}" != "0" ]; then
           SUM_HEAD="${SUM_HEAD} · ⚠️ ${{ steps.collect_stats.outputs.warnings_count }}"
@@ -2295,8 +2303,10 @@ runs:
             echo "| **KernelSU Next Commit** | unknown |"
           fi
           
-          if [ "${{ env.OP_NMS }}" = true ]; then
+          if [ "${{ env.OP_NMS }}" = true ] && [ "${{ inputs.nomount_lkm }}" != true ]; then
             echo "| **NoMount Version** | ${NMVER:-unknown} |"
+          elif [ "${{ inputs.nomount_lkm }}" = true ]; then
+            echo "| **NoMount** | out-of-tree nomount.ko only - NOT in this Image |"
           fi
           
           echo ""
