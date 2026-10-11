@@ -52,10 +52,15 @@ inputs:
     type: string
     default: main
   nomount_lkm:
-    description: 'EXPERIMENT. Build the NoMount engine as a MODULE (CONFIG_NOMOUNT=m) and collect fs/nomount.ko, instead of building it into the Image. The resulting kernel has NO NoMount until that .ko is loaded, and a module named nomount is enumerable in /proc/modules unless something hides it - so this is not a shipping configuration. Needs a patches_ref whose apply_nomount_stack.sh understands NOMOUNT_LKM.'
+    description: 'EXPERIMENT. Do NOT patch NoMount into the kernel; instead build the engine as an out-of-tree module from NoMount-Suite@LKM (lkm/) and collect nomount.ko. The Image then has NO NoMount at all until that .ko is loaded, and a module named nomount is enumerable in /proc/modules unless something hides it - so this is not a shipping configuration. CONFIG_NOMOUNT=m was tried first and does not work: the only built-in hook site is #ifdef CONFIG_NOMOUNT guarded, which =m does not define, and vmlinux then fails arm64 GOT/PLT assertions.'
     required: false
     type: string
     default: 'false'
+  nomount_lkm_ref:
+    description: 'Branch/ref of Bouteillepleine/NoMount-Suite to take lkm/ and hookless/src/ from when nomount_lkm=true.'
+    required: false
+    type: string
+    default: LKM
   patches_ref:
     description: 'kernel_patches branch/ref to source the _ghost/_hook/_pathhide cloaks and the apply script from (default main; set a test branch to validate before merge)'
     required: false
@@ -905,23 +910,19 @@ runs:
       run: |
         bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/fix_ksu_cfi_symbol_calls.sh"
 
+    # nomount_lkm builds the engine out-of-tree instead, so the kernel must NOT carry it:
+    # two engines in one kernel would register the same netlink protocol and the same four
+    # slab caches (vfs_dnode/vfs_ninfo/vfs_iops/vfs_fops).
     - name: Apply NoMount (hookless) Patch
-      if: ${{ env.OP_NMS == 'true' }}
+      if: ${{ env.OP_NMS == 'true' && inputs.nomount_lkm != 'true' }}
       shell: bash
       env:
         NOMOUNT_REF: ${{ inputs.nomount_ref }}
-        NOMOUNT_LKM: ${{ inputs.nomount_lkm == 'true' && '1' || '0' }}
       run: |
         bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" hookless
-        # Propagate to EVERY later step, not just this one: `assert-config` runs from the
-        # "Build Kernel" step after olddefconfig, and assert_config() expects =m only when
-        # it can see this variable.  Setting it per-step is how the first two attempts
-        # failed - the apply step converted the tree, then the assertion a few steps later
-        # still demanded =y.
-        echo "NOMOUNT_LKM=$NOMOUNT_LKM" >> "$GITHUB_ENV"
 
     - name: Record NoMount Version
-      if: ${{ env.OP_NMS == 'true' }}
+      if: ${{ env.OP_NMS == 'true' && inputs.nomount_lkm != 'true' }}
       shell: bash
       run: |
         bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" record-version
@@ -1921,44 +1922,85 @@ runs:
         echo "   - Build time: ${BUILD_TIME}s"
         echo "::endgroup::"
 
-    # The normal build runs `make Image` only - `modules` is built on the debug path
-    # alone - so with CONFIG_NOMOUNT=m nothing produces fs/nomount.ko unless this step
-    # asks for it.  A single-target .ko build is tried first because `modules` on a GKI
-    # defconfig builds hundreds of them; `modules` is the fallback if kbuild refuses the
-    # single target on this tree.
+    # Out-of-tree build of the engine, modelled on the susfs step below - same tree, same
+    # toolchain, same Module.symvers seeding, so the .ko's vermagic matches this Image and
+    # it can actually be loaded.  `build-lkm.yml` in NoMount-Suite builds against a stock
+    # GKI clone and uploads only its symbol-gate log, which is why that artifact cannot be
+    # loaded on a custom kernel.
     #
-    # Non-fatal by design, exactly like the susfs step: this is an experiment behind a
-    # toggle, and it must never be able to fail a kernel build.
-    - name: Build nomount.ko (CONFIG_NOMOUNT=m experiment)
-      if: ${{ inputs.nomount_lkm == 'true' && env.OP_NMS == 'true' }}
+    # Non-fatal by design: an experiment behind a toggle must never fail a kernel build.
+    - name: Build nomount.ko (out-of-tree engine)
+      if: ${{ inputs.nomount_lkm == 'true' }}
       shell: bash
       run: |
         set -uo pipefail
-        echo "::group::Build fs/nomount.ko against this kernel"
-        nm_bail() { echo "::warning::nomount.ko NOT produced - $1"; echo "::endgroup::"; exit 0; }
+        echo "::group::Build nomount.ko out-of-tree against this kernel"
+        nm_bail() {
+          echo "::error::nomount.ko NOT produced - $1"
+          echo "NOMOUNT_KO_STATUS=failed: $1" >> "$GITHUB_ENV"
+          echo "::endgroup::"
+          exit 0
+        }
 
         OUT="$COMMON_KERNEL_FOLDER/out"
-        [ -d "$OUT" ] || nm_bail "no build output dir at $OUT"
-        grep -qx 'CONFIG_NOMOUNT=m' "$OUT/.config" 2>/dev/null ||
-          nm_bail "CONFIG_NOMOUNT=m is not in the generated .config - the toggle did not reach the defconfig"
 
-        MK=(make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper"
-            -C "$COMMON_KERNEL_FOLDER" O="$OUT" -j"$(nproc --all)")
-        if ! "${MK[@]}" fs/nomount.ko 2>&1 | tail -n 20; then
-          echo "single-target build refused; falling back to the full modules target"
-          "${MK[@]}" modules 2>&1 | tail -n 20 || nm_bail "both fs/nomount.ko and modules failed"
+        # `make Image` stops after MODPOST vmlinux.symvers and never writes Module.symvers.
+        # vmlinux.symvers already lists every EXPORT_SYMBOL of this vmlinux with its CRC,
+        # module_layout included, which is what an out-of-tree modpost reads.
+        if [ ! -f "$OUT/Module.symvers" ] && [ -f "$OUT/vmlinux.symvers" ]; then
+          cp "$OUT/vmlinux.symvers" "$OUT/Module.symvers"
+          echo "seeded Module.symvers from vmlinux.symvers ($(wc -l < "$OUT/Module.symvers") symbols)"
+        fi
+        [ -f "$OUT/Module.symvers" ] ||
+          nm_bail "neither Module.symvers nor vmlinux.symvers exists in $OUT"
+        grep -q "	module_layout	" "$OUT/Module.symvers" ||
+          nm_bail "module_layout has no CRC in $OUT/Module.symvers - the load would fail"
+
+        if [ ! -f "$OUT/scripts/module.lds" ]; then
+          make -C "$COMMON_KERNEL_FOLDER" \
+            LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" \
+            O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 modules_prepare ||
+            nm_bail "modules_prepare failed, so modfinal cannot link any .ko"
+          echo "generated $OUT/scripts/module.lds via modules_prepare"
         fi
 
-        KO="$OUT/fs/nomount.ko"
-        [ -s "$KO" ] || nm_bail "fs/nomount.ko was not produced"
+        NM_SRC="$GITHUB_WORKSPACE/nomount-suite-lkm"
+        rm -rf "$NM_SRC"
+        git clone --depth 1 -b "${{ inputs.nomount_lkm_ref }}" \
+          https://github.com/Bouteillepleine/NoMount-Suite.git "$NM_SRC" ||
+          nm_bail "could not clone NoMount-Suite@${{ inputs.nomount_lkm_ref }}"
+        echo "engine source: $(git -C "$NM_SRC" log --oneline -1)"
+        [ -f "$NM_SRC/lkm/Makefile" ] ||
+          nm_bail "NoMount-Suite@${{ inputs.nomount_lkm_ref }} has no lkm/ - the out-of-tree glue lives on the LKM branch"
+        echo "engine version: $(sed -n 's/^#define[[:space:]]\+NM_MODULE_VERSION[[:space:]]\+"\([^"]*\)".*/\1/p' "$NM_SRC/hookless/src/nomount.h" | head -1)"
+
+        export ARCH=arm64 SUBARCH=arm64 LLVM=1 LLVM_IAS=1
+        # 5.10 builds clang's --target from CROSS_COMPILE; newer trees derive it from ARCH.
+        export CROSS_COMPILE=aarch64-linux-gnu-
+
+        # The engine deliberately references unexported symbols that nm_oot.h redirects
+        # through kallsyms at load, so modpost must warn rather than error - exactly as the
+        # susfs step does.  CRCs for everything resolvable are still emitted.
+        if ! make -C "$COMMON_KERNEL_FOLDER" \
+            LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" \
+            O="$OUT" M="$NM_SRC/lkm" KBUILD_MODPOST_WARN=1 modules 2>&1 | tail -n 30; then
+          nm_bail "the out-of-tree build failed"
+        fi
+
+        KO="$NM_SRC/lkm/nomount.ko"
+        [ -s "$KO" ] || nm_bail "nomount.ko was not produced"
 
         KREL="$(cat "$OUT/include/config/kernel.release" 2>/dev/null)"
         KOVM="$(strings "$KO" | sed -n 's/^vermagic=\([^ ]*\).*/\1/p' | head -1)"
         echo "vermagic: ${KOVM:-unreadable} / kernel.release: ${KREL:-unknown}"
         [ -n "$KREL" ] && [ "$KOVM" = "$KREL" ] ||
           nm_bail "vermagic '$KOVM' does not match this kernel '$KREL' - it would not load"
-        strings "$KO" | grep -q 'VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver' ||
-          echo "::warning::nomount.ko has no VFS_internal import namespace - it may fail to resolve VFS-internal exports at load"
+
+        # The point of building here rather than taking build-lkm.yml's artifact: this one
+        # links against a real Module.symvers, so modpost's remaining complaints are the
+        # authoritative list of what the loader has to absolutize.
+        echo "--- unexported symbols the loader must supply ---"
+        nm -u "$KO" | wc -l
 
         NM_OUT="$GITHUB_WORKSPACE/nomount-ko"
         mkdir -p "$NM_OUT"
@@ -1967,10 +2009,11 @@ runs:
         (cd "$NM_OUT" && sha256sum ./* > sha256sums.txt)
         echo "NOMOUNT_KO_DIR=$NM_OUT" >> "$GITHUB_ENV"
         echo "NOMOUNT_KO_NAME=$NAME" >> "$GITHUB_ENV"
+        echo "NOMOUNT_KO_STATUS=ok ($KREL)" >> "$GITHUB_ENV"
         # Deliberately NOT copied into $AK3_FOLDER: an experiment must not reach a
         # flashable package.  Artifact only.
         echo "size: $(stat -c %s "$KO") bytes"
-        echo "✅ nomount.ko collected (artifact only, not bundled into the AK3 zip)"
+        echo "✅ nomount.ko built against this kernel (artifact only)"
         echo "::endgroup::"
 
     - name: Build susfs_guard_lkm.ko

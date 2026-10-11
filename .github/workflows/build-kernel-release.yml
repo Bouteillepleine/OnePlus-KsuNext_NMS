@@ -90,10 +90,15 @@ on:
         type: string
         default: main
       nomount_lkm:
-        description: 'EXPERIMENT: build NoMount as a module (CONFIG_NOMOUNT=m) and collect nomount.ko instead of building it into the Image. The kernel then has NO NoMount until that .ko is loaded. Needs patches_ref=nomount-lkm. Do not use for a release.'
+        description: 'EXPERIMENT: do not patch NoMount into the kernel; build it out-of-tree from NoMount-Suite@LKM and collect nomount.ko. The Image then has NO NoMount until that .ko is loaded. Do not use for a release.'
         required: false
         type: string
         default: 'false'
+      nomount_lkm_ref:
+        description: 'NoMount-Suite branch to take lkm/ and hookless/src/ from when nomount_lkm=true.'
+        required: false
+        type: string
+        default: LKM
 
 jobs:
   set-op-model:
@@ -577,6 +582,7 @@ jobs:
           nomount_ref: ${{ inputs.nomount_ref }}
           patches_ref: ${{ inputs.patches_ref }}
           nomount_lkm: ${{ inputs.nomount_lkm }}
+          nomount_lkm_ref: ${{ inputs.nomount_lkm_ref }}
           clean: ${{ inputs.clean_build }}
           debug: ${{ inputs.debug }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
