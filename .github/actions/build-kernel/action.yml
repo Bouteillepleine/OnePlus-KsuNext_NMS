@@ -913,6 +913,12 @@ runs:
         NOMOUNT_LKM: ${{ inputs.nomount_lkm == 'true' && '1' || '0' }}
       run: |
         bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" hookless
+        # Propagate to EVERY later step, not just this one: `assert-config` runs from the
+        # "Build Kernel" step after olddefconfig, and assert_config() expects =m only when
+        # it can see this variable.  Setting it per-step is how the first two attempts
+        # failed - the apply step converted the tree, then the assertion a few steps later
+        # still demanded =y.
+        echo "NOMOUNT_LKM=$NOMOUNT_LKM" >> "$GITHUB_ENV"
 
     - name: Record NoMount Version
       if: ${{ env.OP_NMS == 'true' }}
