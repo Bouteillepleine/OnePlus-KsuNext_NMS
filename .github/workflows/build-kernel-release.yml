@@ -569,6 +569,43 @@ jobs:
           debug: ${{ inputs.debug }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
+      # raspwatch (external module) -- a module can only load where its
+      # modversion CRCs match, so it is built here, against this job's own
+      # kernel tree. Gated on the repo variable RASPWATCH_REPO; never fails
+      # the kernel build.
+      - name: 🔬 Build raspwatch (external module)
+        if: ${{ vars.RASPWATCH_REPO != '' }}
+        continue-on-error: true
+        env:
+          RASPWATCH_REPO: ${{ vars.RASPWATCH_REPO }}
+          RASPWATCH_REF: ${{ vars.RASPWATCH_REF || 'main' }}
+        run: |
+          set -euo pipefail
+          KERNEL_SRC="$COMMON_KERNEL_FOLDER/out"
+          git clone --depth 1 -b "$RASPWATCH_REF" "$RASPWATCH_REPO" "$RUNNER_TEMP/raspwatch"
+          KERNEL_SRC="$KERNEL_SRC" \
+          RASPWATCH_SRC="$RUNNER_TEMP/raspwatch" \
+          OUT_DIR="$GITHUB_WORKSPACE/raspwatch_out" \
+          KMAKE="LLVM=1 LLVM_IAS=1 LD=ld.lld NM=llvm-nm" \
+          STRIP=llvm-strip SKIP_DAEMON=1 \
+          bash "$RUNNER_TEMP/raspwatch/module/build_with_kernel.sh"
+
+      # Module.symvers + kernel.release are what let any out-of-tree module be
+      # built for this exact kernel later, and what abi-check.sh compares to
+      # tell whether one .ko covers several builds.
+      - name: 📤 Upload raspwatch and kernel ABI
+        if: ${{ vars.RASPWATCH_REPO != '' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: raspwatch-${{ matrix.model }}-${{ matrix.android_version }}-${{ matrix.kernel_version }}-${{ matrix.ksu_type }}
+          if-no-files-found: ignore
+          retention-days: 30
+          path: |
+            raspwatch_out/*
+            ${{ env.COMMON_KERNEL_FOLDER }}/out/Module.symvers
+            ${{ env.COMMON_KERNEL_FOLDER }}/out/include/config/kernel.release
+
       - name: 📊 Build statistics
         id: build-stat
         if: always()
