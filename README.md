@@ -36,12 +36,13 @@ Every release contains two things. Flash the kernel first, then add NoMount Suit
 
 ## Optional: SUSFS
 
-Every kernel ZIP also carries `susfs_guard_lkm.ko`, built against that exact kernel and
-inert unless something loads it. Flashing the kernel drops it into `Download`; installing
-`00_Loader-Module-vX.Y.zip` (also in the Assets) picks it up and loads it at every boot.
+SUSFS comes from KernelSU Next itself now, not from this repo. `ksud` embeds one SUSFS
+module per KMI, and `ksud susfs autoload enable` loads it on every boot. Check your `ksud`
+has it with `ksud susfs --help`: a recent one lists `load` and `autoload`.
 
-Skip it and nothing changes. One module per kernel: by design it will not load on a
-build it was not compiled against.
+Earlier releases shipped `susfs_guard_lkm.ko` inside each kernel ZIP plus a loader module
+to insmod it; both are gone. The ZIPs carry the kernel only, and nothing here needs
+installing for SUSFS. Skip it and nothing changes.
 
 ---
 

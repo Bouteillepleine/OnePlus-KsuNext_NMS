@@ -41,11 +41,6 @@ inputs:
     required: false
     type: boolean
     default: false
-  susfs_lkm_ref:
-    description: 'Branch/ref of Bouteillepleine/susfs4ksu-lkm to build susfs_guard_lkm.ko from, against THIS kernel tree. Empty = do not build it. SUSFS is not in the kernel source; this is the loadable-module port, so it must be compiled against the same tree and toolchain as the Image or its struct offsets and kCFI type hashes will not match.'
-    required: false
-    type: string
-    default: ''
   nomount_ref:
     description: 'NoMount-Suite branch/ref to source the Prism engine src + patches from (default main; set a branch to validate it before it is released). The engine ships inside the Suite repo, under hookless/.'
     required: false
@@ -1909,145 +1904,6 @@ runs:
         echo "   - Build time: ${BUILD_TIME}s"
         echo "::endgroup::"
 
-    - name: Build susfs_guard_lkm.ko
-      id: build_susfs_lkm
-      if: inputs.susfs_lkm_ref != ''
-      shell: bash
-      run: |
-        set -euo pipefail
-        echo "::group::Build susfs_guard_lkm.ko against this kernel"
-
-        # The module is optional; the kernel is not.  A composite action cannot carry
-        # continue-on-error per step, so every bail below goes through this: it annotates
-        # loudly, records why for the summary, and exits 0 so the Image still ships.
-        susfs_bail() {
-          echo "::error::susfs_guard_lkm.ko NOT produced - $1"
-          echo "SUSFS_KO_STATUS=failed: $1" >> "$GITHUB_ENV"
-          echo "::endgroup::"
-          exit 0
-        }
-
-        OUT="$COMMON_KERNEL_FOLDER/out"
-
-        # A normal (debug=false) build runs `make Image` only, so it stops after
-        # `MODPOST vmlinux.symvers` and never writes Module.symvers - that one is a
-        # `make modules` artifact.  vmlinux.symvers already lists every EXPORT_SYMBOL of
-        # this vmlinux with its CRC, module_layout included, which is precisely what an
-        # out-of-tree modpost reads, so seed it rather than forcing a modules build.
-        if [ ! -f "$OUT/Module.symvers" ] && [ -f "$OUT/vmlinux.symvers" ]; then
-          cp "$OUT/vmlinux.symvers" "$OUT/Module.symvers"
-          echo "seeded Module.symvers from vmlinux.symvers ($(wc -l < "$OUT/Module.symvers") symbols)"
-        fi
-        if [ ! -f "$OUT/Module.symvers" ]; then
-          susfs_bail "neither Module.symvers nor vmlinux.symvers exists in $OUT - without kernel symbol CRCs the .ko gets no __versions and a CONFIG_MODVERSIONS kernel refuses it"
-        fi
-        if ! grep -q "	module_layout	" "$OUT/Module.symvers"; then
-          susfs_bail "module_layout has no CRC in $OUT/Module.symvers - that is the one symbol check_modstruct_version() looks up, so the load would fail"
-        fi
-
-        # Same reason as Module.symvers: `make Image` never needs scripts/module.lds, so it
-        # is absent and modfinal cannot link any .ko - it fails with the misleading
-        # "No rule to make target ... .ko, needed by __modfinal".  modules_prepare is the
-        # target that emits it; asking for scripts/module.lds directly does not work with O=.
-        if [ ! -f "$OUT/scripts/module.lds" ]; then
-          make -C "$COMMON_KERNEL_FOLDER" \
-            LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" \
-            O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 modules_prepare
-          echo "generated $OUT/scripts/module.lds via modules_prepare"
-        fi
-
-        SUSFS_SRC="$GITHUB_WORKSPACE/susfs4ksu-lkm"
-        rm -rf "$SUSFS_SRC"
-        git clone --depth 1 -b "${{ inputs.susfs_lkm_ref }}" \
-          https://github.com/Bouteillepleine/susfs4ksu-lkm.git "$SUSFS_SRC"
-        echo "susfs source: $(git -C "$SUSFS_SRC" log --oneline -1)"
-
-        export ARCH=arm64 SUBARCH=arm64
-        export LLVM=1 LLVM_IAS=1
-        # CROSS_COMPILE matters on 5.10 and nowhere else: that Makefile builds clang's
-        # --target from it, so without it clang compiles arm64 headers for the HOST and
-        # every atomic_lse.h asm dies with "unknown register name 'x0'". 5.15 and newer
-        # derive the target from ARCH, which is why only android12-5.10 failed. Same
-        # value the kernel's own build exports.
-        export CROSS_COMPILE=aarch64-linux-gnu-
-
-        # KBUILD_MODPOST_WARN=1 is REQUIRED, not a shortcut: the module deliberately
-        # references unexported symbols (kallsyms_lookup_name, init_mm, saved_boot_config,
-        # task_work_add, ...) which its userspace loader rewrites to absolute addresses
-        # before init_module(2).  modpost treats those as errors by default.  Downgrading
-        # them does NOT cost the CRCs - modpost still emits __versions entries for every
-        # symbol it CAN resolve from Module.symvers, module_layout included, which is what
-        # this kernel's check_modstruct_version() looks up.
-        # The compile is the likeliest thing to fail on a kernel the module has never been
-        # built against. Measured across a full A16 matrix: every android12-5.10 device
-        # fails here with "unknown register name 'x0' in asm" through atomic_lse.h - the
-        # module build is not targeting aarch64 on those trees - while 5.15, 6.1, 6.6 and
-        # 6.12 all build clean. Everything AFTER make was guarded and make itself was not,
-        # so one unbuildable device failed its whole kernel and blocked the release.
-        # Guard it too: the Image still ships, just without the module.
-        if ! make -C "$COMMON_KERNEL_FOLDER" \
-             LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" \
-             O="$OUT" M="$SUSFS_SRC/kernel" \
-             KBUILD_MODPOST_WARN=1 \
-             -j"$(nproc --all)" modules 2>&1 | tee "$GITHUB_WORKSPACE/susfs-build.log" | tail -n 40; then
-          susfs_bail "the module did not compile against this kernel - see susfs-build.log"
-        fi
-
-        KO="$SUSFS_SRC/kernel/susfs_guard_lkm.ko"
-        if [ ! -f "$KO" ]; then
-          susfs_bail "susfs_guard_lkm.ko was not produced"
-        fi
-
-        echo "--- modinfo ---"
-        modinfo "$KO" 2>/dev/null | grep -E "vermagic|name|description|import_ns" || true
-        # (1) Everything else proves the module is LOADABLE; nothing proved it belongs to
-        # THIS kernel.  Three builders emit the same release string with different struct
-        # layouts, so compare against the release this build itself produced.
-        REL_FILE="$OUT/include/config/kernel.release"
-        [ -f "$REL_FILE" ] || susfs_bail "$REL_FILE is missing, so the module cannot be proven to match this kernel"
-        KREL=$(tr -d ' \r\n' < "$REL_FILE")
-        KOVM=$(modinfo "$KO" 2>/dev/null | sed -n 's/^vermagic: *//p' | awk '{print $1}')
-        [ -n "$KOVM" ] || susfs_bail "the module carries no vermagic"
-        [ "$KOVM" = "$KREL" ] || susfs_bail "vermagic mismatch - module says '$KOVM', this kernel is '$KREL'"
-        echo "--- vermagic matches this kernel: $KREL ---"
-
-        echo "--- version sections (must be present, or a MODVERSIONS kernel refuses the load) ---"
-        readelf -SW "$KO" | awk '/__versions|__version_ext/ {print "  "$2" size="$6}'
-        VERS=$(readelf -SW "$KO" | grep -c "__versions" || true)
-        if [ "${VERS:-0}" = "0" ]; then
-          susfs_bail "no __versions section - check_modstruct_version() will take the try_to_force_load() path and this kernel has CONFIG_MODULE_FORCE_LOAD off, so the load would be refused with -ENOEXEC"
-        fi
-        echo "--- module_layout CRC present? ---"
-        if readelf -p __versions "$KO" 2>/dev/null | grep -q module_layout; then
-          echo "  yes - classic __versions carries module_layout"
-        else
-          echo "  not in classic __versions (extended modversions path will be used)"
-        fi
-        echo "--- undefined symbols the loader must absolutize ---"
-        nm -u "$KO" | wc -l
-
-        # NOT $ARTIFACTS_FOLDER: "Create Kernel ZIP" runs
-        #   find "$ARTIFACTS_FOLDER" -maxdepth 1 -type f ! -name "$ZIP_NAME" -delete
-        # which sweeps anything that is not the AK3 zip, so a .ko staged there is gone
-        # before the upload step sees it.  Use a directory of our own.
-        SUSFS_OUT="$GITHUB_WORKSPACE/susfs-ko"
-        mkdir -p "$SUSFS_OUT"
-        cp "$KO" "$SUSFS_OUT/susfs_guard_lkm-${OP_MODEL}-${OP_ANDROID_VERSION}-${OP_KERNEL_VERSION}.ko"
-        echo "SUSFS_KO_DIR=$SUSFS_OUT" >> "$GITHUB_ENV"
-        echo "SUSFS_KO_NAME=susfs_guard_lkm-${OP_MODEL}-${OP_ANDROID_VERSION}-${OP_KERNEL_VERSION}.ko" >> "$GITHUB_ENV"
-
-        # The module rides inside the AK3 zip of the kernel it was built against, so the
-        # two cannot be separated or mispaired. anykernel.sh copies it out to storage on
-        # flash (best-effort), and the autoloader adopts it from there - or straight out
-        # of the zip when /data was not writable at flash time.
-        cp "$KO" "$AK3_FOLDER/susfs_guard_lkm.ko"
-        echo "bundled susfs_guard_lkm.ko into the AK3 zip"
-        (cd "$SUSFS_OUT" && sha256sum ./* > sha256sums.txt)
-        echo "SUSFS_KO_STATUS=ok ($KREL)" >> "$GITHUB_ENV"
-        echo "--- shipped ---"; ls -l "$SUSFS_OUT" | sed 's/^/  /'
-        echo "✅ built against this kernel and bundled into the AK3 zip"
-        echo "::endgroup::"
-
     - name: Create Kernel ZIP
       id: create_zip
       shell: bash
@@ -2249,21 +2105,6 @@ runs:
         archive: false
         compression-level: 0
         retention-days: 90
-
-    # The step now exits 0 even when it bails, so its conclusion is always 'success' and
-    # cannot gate this.  SUSFS_KO_NAME is written only on the success path, so its
-    # presence is the real signal.
-    - name: Upload susfs_guard_lkm.ko
-      if: env.SUSFS_KO_NAME != ''
-      uses: actions/upload-artifact@v7
-      with:
-        name: ${{ env.SUSFS_KO_NAME }}
-        path: ${{ env.SUSFS_KO_DIR }}/${{ env.SUSFS_KO_NAME }}
-        archive: false
-        compression-level: 0
-        retention-days: 90
-        if-no-files-found: error
-
 
     - name: Upload ccache log
       if: success() && inputs.debug == 'true' && steps.build_kernel_step.conclusion == 'success'
