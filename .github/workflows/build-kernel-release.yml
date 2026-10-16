@@ -993,10 +993,6 @@ jobs:
           KMI embedded in \`ksud\`: \`ksud susfs autoload enable\` turns it on and it is loaded on
           every boot. It needs a \`ksud\` new enough to have that command — \`ksud susfs --help\`
           lists \`load\` and \`autoload\` when it does.
-
-          > Earlier releases bundled \`susfs_guard_lkm.ko\` in each kernel zip plus a loader module
-          > to insmod it. Both are gone: the kernel zips carry the Image only, and nothing here
-          > has to be installed for SUSFS.
           EOF
 
           cat << EOF >> release_notes.md
