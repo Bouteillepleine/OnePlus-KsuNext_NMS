@@ -1451,7 +1451,7 @@ runs:
         # A config.gz headed 6.12.23 under a 6.12.58 banner is a tell of its own, so
         # align the header with the kernel actually being built.
         if [ -n "${TKERNEL_VER:-}" ] && ! grep -q "^# Linux/arm64 ${TKERNEL_VER} Kernel Configuration$" "$STOCK"; then
-          echo "::warning title=config.gz spoof::stock config header is not ${TKERNEL_VER} — rewriting it"
+          echo "   header was not ${TKERNEL_VER}; rewriting it to match the kernel being built"
           sed -i "s|^# Linux/arm64 [^ ]* Kernel Configuration$|# Linux/arm64 ${TKERNEL_VER} Kernel Configuration|" "$STOCK"
         fi
 
