@@ -51,6 +51,11 @@ inputs:
     required: false
     type: string
     default: main
+  spoof_config_gz:
+    description: 'Report a stock config at /proc/config.gz instead of the real build config. config = honour each device config stock_config key, on = force for every device built, off = never.'
+    required: false
+    type: string
+    default: config
   github_token:
     description: 'GitHub Token'
     required: true
@@ -1372,6 +1377,143 @@ runs:
         echo "ksu_type=${{ inputs.ksu_type }}" >> "$GITHUB_OUTPUT"
         echo "build_timestamp=${EFFECTIVE_BUILD_TIMESTAMP:-unknown}" >> "$GITHUB_OUTPUT"
 
+    - name: 🫥 Report a stock config at /proc/config.gz
+      shell: bash
+      run: |
+        set -uo pipefail
+        echo "::group::Spoof /proc/config.gz"
+
+        case '${{ inputs.spoof_config_gz }}' in
+          off)
+            echo "spoof_config_gz=off — /proc/config.gz keeps the real build config"
+            echo "STOCK_CONFIG_SPOOF=off" >> "$GITHUB_ENV"
+            echo "::endgroup::"; exit 0 ;;
+          on) want=true ;;
+          *)  want="${OP_STOCK_CONFIG:-false}" ;;
+        esac
+
+        if [ "$want" != "true" ]; then
+          echo "stock_config is not set for $OP_MODEL — /proc/config.gz keeps the real build config"
+          echo "STOCK_CONFIG_SPOOF=off" >> "$GITHUB_ENV"
+          echo "::endgroup::"; exit 0
+        fi
+
+        # Best-effort throughout: a kernel that reports its real config still boots,
+        # one that fails to build does not.
+        skip() {
+          echo "::warning title=config.gz spoof skipped::$1"
+          echo "STOCK_CONFIG_SPOOF=skipped" >> "$GITHUB_ENV"
+          echo "::endgroup::"
+          exit 0
+        }
+
+        STOCK_DIR="$GITHUB_WORKSPACE/configs/stock_config"
+        STOCK="$(mktemp)"
+        SRC=""
+
+        if [ -f "$STOCK_DIR/${OP_MODEL}.config" ]; then
+          cp "$STOCK_DIR/${OP_MODEL}.config" "$STOCK" || skip "could not read $STOCK_DIR/${OP_MODEL}.config"
+          SRC="configs/stock_config/${OP_MODEL}.config"
+        elif [ -f "$STOCK_DIR/${ANDROID_VER}-${KERNEL_VER}.config" ]; then
+          cp "$STOCK_DIR/${ANDROID_VER}-${KERNEL_VER}.config" "$STOCK" || skip "could not read the ${ANDROID_VER}-${KERNEL_VER} family config"
+          SRC="configs/stock_config/${ANDROID_VER}-${KERNEL_VER}.config"
+        else
+          # No capture committed for this model: fall back to the official AOSP GKI
+          # prebuilt kernel for this kernel version and read the config out of it.
+          # Right for a GKI target (the stock OP15 kernels ARE Google-built pure GKI),
+          # wrong for a vendor tree, which is why this whole step is opt-in per device.
+          MAJ="${ANDROID_VER#android}"
+          BASE="https://android.googlesource.com/kernel/prebuilts/${KERNEL_VER}/arm64"
+          IMG="$(mktemp)"
+          for REF in "refs/heads/main" "refs/heads/android${MAJ}-release"; do
+            echo "Fetching GKI prebuilt kernel-${KERNEL_VER}-gz @ ${REF}"
+            if curl -fsSL --retry 3 --retry-delay 5 --max-time 600 \
+                 "${BASE}/+/${REF}/kernel-${KERNEL_VER}-gz?format=TEXT" | base64 -d > "$IMG" \
+               && [ -s "$IMG" ]; then
+              break
+            fi
+            : > "$IMG"
+          done
+          [ -s "$IMG" ] || skip "no committed stock config for $OP_MODEL and no GKI prebuilt for ${KERNEL_VER}"
+          sh "$COMMON_KERNEL_FOLDER/scripts/extract-ikconfig" "$IMG" > "$STOCK" \
+            || skip "extract-ikconfig failed on kernel-${KERNEL_VER}-gz"
+          SRC="AOSP GKI prebuilt kernel-${KERNEL_VER}-gz"
+        fi
+
+        [ -s "$STOCK" ] && head -n 5 "$STOCK" | grep -q "Kernel Configuration" \
+          || skip "stock config is empty or carries no kernel-config header ($SRC)"
+
+        markers="$(grep -cE 'CONFIG_KSU|CONFIG_NOMOUNT|SUSFS|SCHED_BORE' "$STOCK" || true)"
+        if [ "${markers:-0}" != "0" ]; then
+          echo "::warning title=config.gz spoof::stock config carries ${markers} root marker(s) — check $SRC"
+        fi
+
+        # A config.gz headed 6.12.23 under a 6.12.58 banner is a tell of its own, so
+        # align the header with the kernel actually being built.
+        if [ -n "${TKERNEL_VER:-}" ] && ! grep -q "^# Linux/arm64 ${TKERNEL_VER} Kernel Configuration$" "$STOCK"; then
+          echo "::warning title=config.gz spoof::stock config header is not ${TKERNEL_VER} — rewriting it"
+          sed -i "s|^# Linux/arm64 [^ ]* Kernel Configuration$|# Linux/arm64 ${TKERNEL_VER} Kernel Configuration|" "$STOCK"
+        fi
+
+        # /proc/version carries the REAL compiler (LINUX_COMPILER is generated from
+        # CONFIG_CC_VERSION_TEXT at build time) and is not spoofed, so a stock config
+        # naming a different clang contradicts the banner with nothing but a local
+        # read. Align that one key; LOCALVERSION stays stock, which is consistent
+        # because uname -r is already spoofed to the stock string.
+        if grep -q '^CONFIG_CC_VERSION_TEXT=' "$STOCK"; then
+          cc_text="$(clang --version 2>/dev/null | head -n 1 || true)"
+          if [ -n "$cc_text" ]; then
+            CC_TEXT="$cc_text" python3 - "$STOCK" <<'PY' || echo "::warning title=config.gz spoof::could not align CONFIG_CC_VERSION_TEXT"
+        import os, sys
+        path, cc = sys.argv[1], os.environ["CC_TEXT"]
+        with open(path) as f:
+            lines = f.readlines()
+        with open(path, "w") as f:
+            for line in lines:
+                if line.startswith("CONFIG_CC_VERSION_TEXT="):
+                    line = 'CONFIG_CC_VERSION_TEXT="%s"\n' % cc
+                f.write(line)
+        PY
+          else
+            echo "::warning title=config.gz spoof::clang not resolvable here; CONFIG_CC_VERSION_TEXT left at its stock value"
+          fi
+        fi
+
+        install -m 0644 "$STOCK" "$COMMON_KERNEL_FOLDER/arch/arm64/configs/stock_defconfig" \
+          || skip "could not install arch/arm64/configs/stock_defconfig"
+
+        MK="$COMMON_KERNEL_FOLDER/kernel/Makefile"
+        [ -f "$MK" ] || skip "$MK not found"
+
+        # Repoint the IKCONFIG blob at the stock config. The real .config still drives
+        # the compile, so every feature stays built in and working — only what
+        # /proc/config.gz hands out changes. 5.19+ trees build config_data then gzip it;
+        # older ones gzip $(KCONFIG_CONFIG) straight into config_data.gz.
+        NEW='$(srctree)/arch/arm64/configs/stock_defconfig'
+        patched=""
+        for tgt in 'config_data' 'config_data.gz'; do
+          if grep -qF "\$(obj)/${tgt}: \$(KCONFIG_CONFIG) FORCE" "$MK"; then
+            sed -i "s|\$(obj)/${tgt}: \$(KCONFIG_CONFIG) FORCE|\$(obj)/${tgt}: ${NEW} FORCE|" "$MK"
+            grep -qF "\$(obj)/${tgt}: ${NEW} FORCE" "$MK" || skip "the ${tgt} rule did not take"
+            patched="$tgt"
+            break
+          fi
+        done
+        [ -n "$patched" ] || skip "no config_data rule to repoint in kernel/Makefile"
+
+        # kernel/configs.c pulls the blob in with .incbin, which ccache cannot see: a
+        # cached configs.o from an earlier build would serve the REAL config.gz. A
+        # per-build -D forces that one object to miss the cache.
+        if ! grep -q '__STOCK_CONFIG_STAMP__' "$MK"; then
+          printf '\nCFLAGS_configs.o += -D__STOCK_CONFIG_STAMP__=%s\n' "$(date -u +%s)" >> "$MK"
+        fi
+
+        echo "STOCK_CONFIG_SPOOF=$SRC" >> "$GITHUB_ENV"
+        echo "✅ /proc/config.gz will report the stock config"
+        echo "   source: $SRC ($(wc -l < "$STOCK") lines)"
+        echo "   rule:   $(grep -nF "\$(obj)/${patched}: ${NEW} FORCE" "$MK")"
+        echo "::endgroup::"
+
     - name: Customize Kernel Branding
       shell: bash
       run: |
@@ -1999,6 +2141,7 @@ runs:
           echo "Unicode Fix: ${{ env.OP_UNICODE }}"
           echo "NTSync: ${{ env.OP_NTSYNC }}"
           echo "Droidspaces: ${{ env.OP_DS }}"
+          echo "config.gz: ${{ env.STOCK_CONFIG_SPOOF }}"
           echo ""
           echo "Image SHA256: ${{ steps.collect_stats.outputs.image_sha256 }}"
           echo "AnyKernel3 ZIP SHA256: ${{ steps.create_zip.outputs.zip_sha256 }}"
@@ -2063,6 +2206,7 @@ runs:
           echo "| **Unicode Fix** | ${{ env.OP_UNICODE }} |"
           echo "| **NTSync** | ${{ env.OP_NTSYNC }} |"
           echo "| **Droidspaces** | ${{ env.OP_DS }} |"
+          echo "| **config.gz** | ${{ env.STOCK_CONFIG_SPOOF }} |"
           
           echo ""
           echo "#### 📊 Build Metrics"

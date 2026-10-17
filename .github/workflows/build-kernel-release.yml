@@ -84,6 +84,12 @@ on:
         required: false
         type: string
         default: main
+      spoof_config_gz:
+        description: 'Report a stock config at /proc/config.gz instead of the real one (hides CONFIG_NOMOUNT, KSU, SUSFS, ADIOS). config = per device config stock_config key, on = every device built, off = never.'
+        required: false
+        type: choice
+        options: [config, 'on', 'off']
+        default: config
 
 jobs:
   set-op-model:
@@ -565,6 +571,7 @@ jobs:
           enable_adios: ${{ inputs.enable_adios }}
           nomount_ref: ${{ inputs.nomount_ref }}
           patches_ref: ${{ inputs.patches_ref }}
+          spoof_config_gz: ${{ inputs.spoof_config_gz || 'config' }}
           clean: ${{ inputs.clean_build }}
           debug: ${{ inputs.debug }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
