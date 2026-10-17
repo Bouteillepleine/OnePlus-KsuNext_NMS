@@ -770,6 +770,63 @@ runs:
         echo "✅ Dependencies cloned"
         echo "::endgroup::"
 
+    - name: 🫥 Snapshot the stock kernel config
+      shell: bash
+      run: |
+        set -uo pipefail
+        echo "::group::Snapshot the stock kernel config"
+
+        # Resolve the config.gz-spoof gate here, while the tree is still pristine:
+        # the first step to touch gki_defconfig is "Add KernelSU Next" below.
+        case '${{ inputs.spoof_config_gz }}' in
+          off) want=false ;;
+          on)  want=true ;;
+          *)   want="${OP_STOCK_CONFIG:-false}" ;;
+        esac
+        echo "STOCK_CONFIG_WANT=$want" >> "$GITHUB_ENV"
+        if [ "$want" != "true" ]; then
+          echo "config.gz spoof off for $OP_MODEL — not snapshotting"
+          echo "::endgroup::"; exit 0
+        fi
+
+        # Resolve this model's OWN defconfig before any of our patches land. That is
+        # what its stock kernel's config.gz holds — every vendor and SoC symbol an
+        # AOSP GKI prebuilt knows nothing about — and it tracks the sublevel being
+        # built, so unlike a committed capture it cannot go stale.
+        OUT="${RUNNER_TEMP}/out-stock"
+        SNAP="${RUNNER_TEMP}/stock-snapshot.config"
+        rm -rf "$OUT"
+        ok=false
+        for flags in "ARCH=arm64 LLVM=1" "ARCH=arm64"; do
+          if make -C "$COMMON_KERNEL_FOLDER" $flags O="$OUT" gki_defconfig >/dev/null 2>&1; then
+            make -C "$COMMON_KERNEL_FOLDER" $flags O="$OUT" olddefconfig >/dev/null 2>&1 || true
+            ok=true
+            break
+          fi
+          echo "gki_defconfig with '$flags' did not resolve; trying the next form"
+          rm -rf "$OUT"
+        done
+
+        if [ "$ok" != "true" ] || [ ! -s "$OUT/.config" ]; then
+          echo "::warning title=config.gz spoof::could not resolve this model's stock defconfig; falling back to a committed capture or the GKI prebuilt"
+          rm -rf "$OUT"
+          echo "::endgroup::"; exit 0
+        fi
+        if ! head -n 5 "$OUT/.config" | grep -q "Kernel Configuration"; then
+          echo "::warning title=config.gz spoof::resolved defconfig has no kernel-config header; ignoring it"
+          rm -rf "$OUT"
+          echo "::endgroup::"; exit 0
+        fi
+
+        cp "$OUT/.config" "$SNAP"
+        rm -rf "$OUT"
+        echo "STOCK_SNAPSHOT=$SNAP" >> "$GITHUB_ENV"
+        # A copy for auditing, uploaded with the debug artifacts when debug is on.
+        cp "$SNAP" "$DEBUG_ARTIFACTS_FOLDER/stock_config_${OP_MODEL}.config" 2>/dev/null || true
+        echo "✅ snapshot: $(wc -l < "$SNAP") lines, sha256 $(sha256sum "$SNAP" | cut -c1-16)"
+        echo "   $(sed -n 3p "$SNAP")"
+        echo "::endgroup::"
+
     - name: Clean Up ABI Protected Exports
       shell: bash
       run: |
@@ -1383,17 +1440,9 @@ runs:
         set -uo pipefail
         echo "::group::Spoof /proc/config.gz"
 
-        case '${{ inputs.spoof_config_gz }}' in
-          off)
-            echo "spoof_config_gz=off — /proc/config.gz keeps the real build config"
-            echo "STOCK_CONFIG_SPOOF=off" >> "$GITHUB_ENV"
-            echo "::endgroup::"; exit 0 ;;
-          on) want=true ;;
-          *)  want="${OP_STOCK_CONFIG:-false}" ;;
-        esac
-
-        if [ "$want" != "true" ]; then
-          echo "stock_config is not set for $OP_MODEL — /proc/config.gz keeps the real build config"
+        # The snapshot step above resolved the gate while the tree was pristine.
+        if [ "${STOCK_CONFIG_WANT:-false}" != "true" ]; then
+          echo "config.gz spoof off for $OP_MODEL — /proc/config.gz keeps the real build config"
           echo "STOCK_CONFIG_SPOOF=off" >> "$GITHUB_ENV"
           echo "::endgroup::"; exit 0
         fi
@@ -1417,6 +1466,9 @@ runs:
         elif [ -f "$STOCK_DIR/${ANDROID_VER}-${KERNEL_VER}.config" ]; then
           cp "$STOCK_DIR/${ANDROID_VER}-${KERNEL_VER}.config" "$STOCK" || skip "could not read the ${ANDROID_VER}-${KERNEL_VER} family config"
           SRC="configs/stock_config/${ANDROID_VER}-${KERNEL_VER}.config"
+        elif [ -n "${STOCK_SNAPSHOT:-}" ] && [ -s "${STOCK_SNAPSHOT}" ]; then
+          cp "$STOCK_SNAPSHOT" "$STOCK" || skip "could not read the stock defconfig snapshot"
+          SRC="stock defconfig resolved from this model's own tree"
         else
           # No capture committed for this model: fall back to the official AOSP GKI
           # prebuilt kernel for this kernel version and read the config out of it.
