@@ -907,6 +907,23 @@ runs:
           exit 1
         fi
 
+        # Without a compile-time manager package the throne tracker rescans
+        # /data/app whenever a packages.list pass fails to show the manager, and
+        # that walk is observable from an app that watches its own package dir.
+        THRONE_PATCH="${BOUTEILLE_KERNEL_PATCHES_FOLDER:-}/next/throne_tracker_keep_pin.patch"
+        if grep -q "manager apk still present" manager/throne_tracker.c; then
+          echo "-- throne_tracker already keeps the manager pin upstream"
+        elif [ -f "$THRONE_PATCH" ]; then
+          if ! patch -p1 --forward < "$THRONE_PATCH"; then
+            echo "::error::throne_tracker_keep_pin.patch failed to apply"
+            exit 1
+          fi
+          echo "-- throne_tracker keeps the manager pin across a torn packages.list read"
+        else
+          echo "::error::kernel_patches/next/throne_tracker_keep_pin.patch is missing"
+          exit 1
+        fi
+
         if [ -f manager/apk_sign.c ]; then
           ALT_SIZE="0x326"
           ALT_HASH="8e2fd3800c10ac3bace8a3ec09a9668a9faf41e42ff8ebf8235be7dac26ee35c"
