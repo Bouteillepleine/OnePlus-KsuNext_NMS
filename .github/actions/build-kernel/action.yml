@@ -939,10 +939,24 @@ runs:
           echo "-- Secondary manager key trusted: ${ALT_SIZE} / ${ALT_HASH}"
         fi
 
+        # The uapi include is KSUN's own: app_profile.h moved under include/uapi and
+        # the Kbuild was not told. Still gated, because adding it to a tree that
+        # does not have that layout is noise.
         if [[ "$KSU_VERSION" -gt 33095 ]] && [[ "${{ env.KERNEL_VER }}" == "6.12" ]]; then
           sed -i 's|ccflags-y += -I$(KSU_KERNEL_DIR) -I$(KSU_KERNEL_DIR)/include|ccflags-y += -I$(KSU_KERNEL_DIR) -I$(KSU_KERNEL_DIR)/include -I$(KSU_KERNEL_DIR)/include/uapi|' Kbuild
-          sed -i 's|$(src)|$(abspath $(src))|' Kbuild
-          sed -i 's|$(srctree)/$(src)|$(abspath $(srctree)/$(src))|' Kbuild
+        fi
+
+        # Kbuild changed $(src) semantics on 6.12, so KSU_KERNEL_DIR resolves relative to
+        # the symlinked drivers/kernelsu and rules built from it (the preinit runner.elf
+        # prerequisite, the -I paths) point outside the tree. Anchor it on the Kbuild's
+        # own absolute directory instead; identical result on older kernels, so this is
+        # not gated on the version -- the anchored seds match only where the problem is.
+        sed -i \
+          -e 's|^KSU_KERNEL_DIR := $(srctree)/$(src)$|KSU_KERNEL_DIR := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))|' \
+          -e 's|^KSU_KERNEL_DIR := $(src)$|KSU_KERNEL_DIR := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))|' \
+          Kbuild
+        if grep -q 'KSU_KERNEL_DIR := $(patsubst' Kbuild; then
+          echo "Anchored KSU_KERNEL_DIR on the Kbuild's own directory (6.12 \$(src) fix)"
         fi
 
         cd ..
