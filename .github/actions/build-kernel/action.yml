@@ -1947,7 +1947,17 @@ runs:
         
         
         ZIP_MODEL=$(echo "$OP_MODEL" | sed 's/-[0-9]\+\.[0-9]\+\.[0-9]\+$//')
-        ZIP_NAME="AK3_${ZIP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_${{ inputs.ksu_type }}_${KSUVER:-unknown}.zip"
+        # The engine version belongs in the FILENAME, not only in the build
+        # summary. NM_MODULE_VERSION is what the module release is cut against,
+        # and two zips built from different engines are otherwise identical on
+        # disk -- same model, same kernel, same KSU version -- so the one in
+        # Downloads cannot be told from the one already flashed. Only the NMS
+        # branch carries it; a non-NoMount build has no engine to name.
+        if [ "${{ env.OP_NMS }}" = true ]; then
+          ZIP_NAME="AK3_${ZIP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_${{ inputs.ksu_type }}_${KSUVER:-unknown}_NM${NMVER:-unknown}.zip"
+        else
+          ZIP_NAME="AK3_${ZIP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_${{ inputs.ksu_type }}_${KSUVER:-unknown}.zip"
+        fi
         mkdir -p "$ARTIFACTS_FOLDER"
         
         echo "Creating flashable ZIP: $ZIP_NAME"
