@@ -912,6 +912,20 @@ runs:
         bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" ghost
         bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" pathhide
 
+    # Every family is applied at fuzz 0, but `patch` still exits 0 when a hunk
+    # lands at an offset -- and an offset can put a guard inside the wrong
+    # function. That is not hypothetical: ghost_notdir.patch sat in
+    # path_parentat() instead of path_lookupat() for four kernel versions with
+    # every build green. do_verify() asserts per family that each guard is
+    # inside the function it names, so a mislanded hunk fails the build here
+    # rather than shipping a cloak with a hole in it.
+    - name: Verify NoMount stack
+      if: ${{ env.OP_NMS == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" verify
+
     - name: Add BBG
       if: ${{ env.OP_BBG == 'true' }}
       shell: bash
