@@ -1056,8 +1056,7 @@ jobs:
           ## 🧷 SUSFS
 
           Every kernel above has **SUSFS ${SUSFS_VER}** compiled in, patched from
-          [simonpunk/susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) at build time, on top of
-          NoMount rather than instead of it.
+          [simonpunk/susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) at build time.
           EOF
           fi
 
