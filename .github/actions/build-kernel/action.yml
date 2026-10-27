@@ -57,10 +57,10 @@ inputs:
     type: string
     default: main
   patches_ref:
-    description: 'kernel_patches branch/ref to source the _ghost/_hook/_pathhide cloaks and the apply script from (this susfs-test branch defaults to susfs-6.12.81-fix, which carries the 6.12.81 kernel_fix variant; main does not)'
+    description: 'kernel_patches branch/ref to source the _ghost/_hook/_pathhide cloaks and the apply script from (default main; set a test branch to validate before merge)'
     required: false
     type: string
-    default: susfs-6.12.81-fix
+    default: main
   spoof_config_gz:
     description: 'Report a stock config at /proc/config.gz instead of the real build config. config = honour each device config stock_config key, on = force for every device built, off = never.'
     required: false
