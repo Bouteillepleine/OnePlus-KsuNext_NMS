@@ -1110,6 +1110,24 @@ runs:
         echo "-- ksu_toolkit.patch"
         patch -p1 --forward < "$FIXDIR/ksu_toolkit.patch"
 
+        # The enable patch rewrites KernelSU's ksu_close_fd() wrapper -- a plain
+        # close(2) syscall, valid on every version -- into the raw close_fd(),
+        # which the kernel only grew in 5.11. On 5.10 that is an implicit
+        # declaration and -Werror kills the build. preinit.c does NOT reject, so
+        # no per-rejected-file fix patch can ever carry this; it is repaired
+        # unconditionally and asserted, so the day upstream fixes it the patch
+        # simply has nothing to do.
+        if grep -qE '^[[:space:]]+close_fd\(' kernel/preinit/preinit.c; then
+          echo "-- preinit_close_fd.patch"
+          patch -p1 --forward -F0 < "$FIXDIR/preinit_close_fd.patch"
+        else
+          echo "-- preinit.c already uses ksu_close_fd; nothing to repair"
+        fi
+        if grep -qE '^[[:space:]]+close_fd\(' kernel/preinit/preinit.c; then
+          echo "::error::preinit.c still calls the raw close_fd(), which does not exist before 5.11. The repair did not take."
+          exit 1
+        fi
+
         # The fix set takes KernelSU-Next's own hook subsystem out of the Kbuild
         # because the kernel-side patch below supplies inline hooks instead. If
         # both were live the syscall entries would be hooked twice.
@@ -1149,8 +1167,10 @@ runs:
           # fuzz 0; requiring exactly one winner is what catches two variants
           # silently claiming the same tree.
           chosen=""
+          tried=""
           for cand in "$FIXDIR"/kernel_fix_"${SUSFS_GKI_BRANCH}"*.patch; do
             [ -f "$cand" ] || continue
+            tried="$tried $(basename "$cand")"
             cand_files="$(grep '^+++ b/' "$cand" | sed 's|^+++ b/||' | sort -u)"
             if [ "$cand_files" != "$rejected_files" ]; then
               echo "     skip $(basename "$cand"): covers $(echo "$cand_files" | tr '\n' ' ')"
@@ -1170,7 +1190,7 @@ runs:
           if [ -z "$chosen" ]; then
             echo "::error::The SUSFS kernel patch rejected hunks in: $(echo "$rejected_files" | tr '\n' ' ')"
             echo "::error::and no kernel_fix_${SUSFS_GKI_BRANCH}*.patch in the $SUSVER fix set carries exactly those files at fuzz 0."
-            echo "::error::Candidates tried: $(basename -a "$FIXDIR"/kernel_fix_"${SUSFS_GKI_BRANCH}"*.patch 2>/dev/null | tr '\n' ' ')"
+            echo "::error::Candidates tried:${tried:- none exist for this GKI branch}"
             echo "::error::Generate a variant for this tree shape before building it."
             exit 1
           fi

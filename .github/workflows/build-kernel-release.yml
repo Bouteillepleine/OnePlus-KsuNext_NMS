@@ -70,7 +70,7 @@ on:
         type: boolean
         default: false
       enable_susfs:
-        description: 'Build with SUSFS instead of NoMount. One hiding stack per build: this turns NoMount off for every device in the run, because both patch the same kernel functions. Only android16-6.12 has a kernel_fix variant set (incl. 6.12.81); 5.10/5.15/6.1/6.6 are unproven here and will fail loudly rather than mis-apply.'
+        description: 'Build with SUSFS instead of NoMount. One hiding stack per build: this turns NoMount off for every device in the run, because both patch the same kernel functions. kernel_fix variants exist for 5.15, 6.1, 6.6 and 6.12 (incl. 6.12.81); a tree shape with no matching variant fails loudly rather than mis-applying.'
         type: boolean
         default: false
       susfs_ref:
