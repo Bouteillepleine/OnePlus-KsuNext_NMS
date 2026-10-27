@@ -63,7 +63,6 @@ jobs:
           Baka-SU/BakaSU#main#BakaSU root impl
           WildKernels/kernel_patches#main#hooks + susfs, UNPINNED
           Bouteillepleine/kernel_patches#main#our _ghost/_pathhide/_hook
-          Bouteillepleine/susfs4ksu-lkm#main#susfs lkm
           Bouteillepleine/NoMount-Suite#main#Prism engine src
           vc-teahouse/Baseband-guard#main#baseband guard
           SOURCES

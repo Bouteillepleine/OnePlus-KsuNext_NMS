@@ -45,6 +45,11 @@ It is an **addon, not a swap**. NoMount still does the mountless serving, SUSFS 
 it, and the NoMount verifier runs again afterwards so a SUSFS hunk cannot quietly displace one of
 the cloak families. Builds without SUSFS behave exactly as before.
 
+**NoMount needs nothing from it:** nothing the engine serves is a mount. SUSFS is there for whatever
+hiding you choose to leave to it, driven by the `ksu_susfs` tool from the upstream module, which
+these releases do not ship. No `.ko` and no loader module ride along in the kernel ZIP or the
+release assets.
+
 `enable_susfs` turns it on for a run and `susfs_ref` pins the susfs4ksu ref, defaulting to the
 `gki-<android>-<kernel>` branch matching each device.
 
@@ -183,7 +188,6 @@ Appreciated, never expected.
 - **KernelSU Next** — the root solution
 - **AnyKernel3** by osm0sis and contributors
 - **[WildKernels/OnePlus_KernelSU_SUSFS](https://github.com/WildKernels/OnePlus_KernelSU_SUSFS)** — the excellent OnePlus build framework this is forked from
-- **[inforcqb/susfs4ksu-lkm](https://github.com/inforcqb/susfs4ksu-lkm)** — SUSFS as a loadable module, which KernelSU Next now ships
 - **OnePlusOSS** — kernel source
 - Community testers and contributors
 ---
