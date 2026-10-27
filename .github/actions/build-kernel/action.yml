@@ -1996,6 +1996,13 @@ runs:
           make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" -j"$(nproc --all)" O="$OUT" KCFLAGS="$KCFLAGS" KCPPFLAGS="$KCPPFLAGS" Image 2>&1 | tee build.log
         fi
         
+        REAL_CONFIG="$OUT/.config"
+        if [ -s "$REAL_CONFIG" ]; then
+          mkdir -p "$DEBUG_ARTIFACTS_FOLDER"
+          cp "$REAL_CONFIG" "$DEBUG_ARTIFACTS_FOLDER/real_config_${OP_MODEL}.config"
+          echo "REAL_CONFIG_FILE=$DEBUG_ARTIFACTS_FOLDER/real_config_${OP_MODEL}.config" >> "$GITHUB_ENV"
+        fi
+        
         BUILD_END=$(date +%s)
         BUILD_TIME=$((BUILD_END - BUILD_START))
         
@@ -2343,6 +2350,16 @@ runs:
           echo ""
           echo "</details>"
         } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload Kernel Config
+      if: ${{ always() && !cancelled() && env.REAL_CONFIG_FILE != '' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: "${{ env.OP_MODEL }}_${{ env.OP_OS_VERSION }}_${{ env.KERNEL_FULL_VER }}_config"
+        path: ${{ env.REAL_CONFIG_FILE }}
+        archive: false
+        compression-level: 0
+        retention-days: 90
 
     - name: Upload Debug Artifacts
       if: ${{ always() && !cancelled() && inputs.debug == 'true' }}

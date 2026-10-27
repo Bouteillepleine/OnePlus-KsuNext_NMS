@@ -15,7 +15,7 @@
   "disk_cleanup": false,
   "hmbird": false,
   "NMS": true,
-  "stock_config": true,
+  "stock_config": false,
   "opt": false,
   "ds": false,
   "bbg": false,
