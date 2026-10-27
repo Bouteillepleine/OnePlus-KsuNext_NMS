@@ -1,0 +1,202 @@
+name: NMS Upstream Canary
+
+# The builders clone every root implementation and every patch source at a
+# MOVING ref, and WildKernels/kernel_patches is pinned to nothing at all. Our
+# _ghost / _pathhide hunks live in the same functions theirs do (fs/open.c,
+# fs/stat.c, fs/proc/task_mmu.c, fs/proc/base.c, kernel/sys.c), and
+# apply_nomount_stack.sh runs at fuzz 0 - so an upstream edit does not corrupt
+# anything, it just stops applying and the build dies loudly. Safe, but only if
+# a build actually runs. This runs one the day upstream moves, instead of the
+# day a kernel is needed.
+#
+# Cheap by design: the daily job is a handful of API calls. A kernel build is
+# dispatched only when a tracked SHA changed since the last check. State lives
+# on the status-page branch, not in Actions cache, because cache eviction would
+# look like drift and fire a build for nothing.
+
+on:
+  schedule:
+    - cron: '20 5 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Build even if nothing upstream moved'
+        required: false
+        type: boolean
+        default: false
+      canary_target:
+        description: 'Device/prefix to canary-build'
+        required: false
+        type: string
+        default: 'OP15-6.12.81'
+
+permissions:
+  contents: write
+  actions: write
+  issues: write
+
+concurrency:
+  group: nms-canary
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      STATE_FILE: nms_canary_state.txt
+      KSU_OPTIONS: '[{"type":"KSUN","hash":"dev"}]'
+      CANARY_TARGET: ${{ github.event.inputs.canary_target || 'OP15-6.12.81' }}
+    steps:
+      - name: Collect upstream HEADs
+        run: |
+          set -u
+          : > heads.txt
+          while IFS='#' read -r repo ref note; do
+            [ -n "$repo" ] || continue
+            sha=$(gh api "repos/$repo/commits/$ref" --jq '.sha' 2>/dev/null || true)
+            [ -n "$sha" ] || sha=UNREACHABLE
+            printf '%s %s %s (%s)\n' "$repo" "$ref" "$sha" "$note" >> heads.txt
+          done <<'SOURCES'
+          KernelSU-Next/KernelSU-Next#dev#KSUN root impl
+          ShirkNeko/SukiSU-Ultra#main#SukiSU root impl
+          Baka-SU/BakaSU#main#BakaSU root impl
+          WildKernels/kernel_patches#main#hooks + susfs, UNPINNED
+          Bouteillepleine/kernel_patches#main#our _ghost/_pathhide/_hook
+          Bouteillepleine/susfs4ksu-lkm#main#susfs lkm
+          Bouteillepleine/NoMount-Suite#main#Prism engine src
+          vc-teahouse/Baseband-guard#main#baseband guard
+          SOURCES
+          echo '--- tracked upstream HEADs ---'
+          cat heads.txt
+          if grep -q UNREACHABLE heads.txt; then
+            echo "::warning::a source was unreachable; that is not treated as drift"
+          fi
+
+      - name: Load the previous HEADs
+        run: |
+          set -u
+          if git clone --depth 1 --branch status-page \
+               "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}" state 2>/dev/null \
+             && [ -f "state/$STATE_FILE" ]; then
+            cp "state/$STATE_FILE" heads.prev
+            echo 'loaded previous state'
+          else
+            echo 'no previous state - first run'
+          fi
+
+      - name: Decide whether anything moved
+        id: decide
+        run: |
+          set -u
+          # An unreachable source must not read as drift, and must not
+          # overwrite a known-good SHA in the state file.
+          if [ -f heads.prev ]; then
+            grep -v UNREACHABLE heads.txt > now.cmp || true
+            grep UNREACHABLE heads.txt | while read -r repo ref rest; do
+              grep "^$repo $ref " heads.prev || true
+            done >> now.cmp
+            sort -o now.cmp now.cmp
+            sort heads.prev > prev.cmp
+          else
+            cp heads.txt now.cmp
+            : > prev.cmp
+          fi
+
+          moved=no
+          if [ ! -s prev.cmp ]; then
+            echo 'no baseline yet - building once to establish one'
+            moved=yes
+          elif diff -u prev.cmp now.cmp > drift.diff; then
+            echo 'no tracked source moved since the last check'
+          else
+            echo '--- upstream drift ---'
+            cat drift.diff
+            moved=yes
+          fi
+          if [ "${{ github.event.inputs.force }}" = 'true' ]; then
+            echo 'forced'
+            moved=yes
+          fi
+          echo "moved=$moved" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch the canary build
+        if: steps.decide.outputs.moved == 'yes'
+        run: |
+          set -eu
+          gh workflow run build-kernel-release.yml \
+            --repo '${{ github.repository }}' \
+            --ref '${{ github.ref_name }}' \
+            -f make_release=false \
+            -f op_model=android16-6.12 \
+            -f op_target_model="$CANARY_TARGET" \
+            -f ksu_options="$KSU_OPTIONS" \
+            -f optimize_level=O2
+          echo "dispatched $CANARY_TARGET"
+
+      - name: Record the new HEADs
+        if: steps.decide.outputs.moved == 'yes'
+        run: |
+          set -eu
+          if [ ! -d state ]; then
+            mkdir state
+            cd state
+            git init -q
+            git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}"
+            git checkout -q --orphan status-page
+            cd ..
+          fi
+          cp now.cmp "state/$STATE_FILE"
+          cd state
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add "$STATE_FILE"
+          git diff --staged --quiet || (git commit -qm 'ci: sync nms canary state [skip ci]' && git push -q origin HEAD:status-page)
+
+      - name: Open or update the drift issue
+        if: steps.decide.outputs.moved == 'yes'
+        run: |
+          set -u
+          gh label create canary --color FBCA04 --repo '${{ github.repository }}' --force || true
+          {
+            echo 'A source the builders clone at a moving ref has changed.'
+            echo
+            echo '```diff'
+            cat drift.diff 2>/dev/null || echo '(no baseline yet)'
+            echo '```'
+            echo
+            echo "Canary build dispatched: \`$CANARY_TARGET\` on android16-6.12, no release."
+            echo 'If it goes red, our patch stack no longer applies to current upstream.'
+            echo
+            echo '${{ github.server_url }}/${{ github.repository }}/actions/workflows/build-kernel-release.yml'
+          } > body.md
+          n=$(gh issue list --repo '${{ github.repository }}' --label canary --state open \
+                --json number --jq '.[0].number')
+          if [ -z "$n" ]; then
+            gh issue create --repo '${{ github.repository }}' --label canary \
+              --title "Upstream drift - $(date -u +%Y-%m-%d)" --body-file body.md
+          else
+            gh issue comment "$n" --repo '${{ github.repository }}' --body-file body.md
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo '### NMS upstream canary'
+            echo
+            if [ '${{ steps.decide.outputs.moved }}' = 'yes' ]; then
+              echo "Drift found - dispatched \`$CANARY_TARGET\` on android16-6.12 (no release)."
+              echo
+              echo '```diff'
+              cat drift.diff 2>/dev/null || echo '(no baseline yet)'
+              echo '```'
+            else
+              echo 'No tracked source moved. Nothing dispatched.'
+            fi
+            echo
+            echo '```'
+            cat heads.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+# ci: register on default branch
