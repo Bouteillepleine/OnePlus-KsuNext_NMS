@@ -104,21 +104,27 @@ jobs:
           fi
 
           moved=no
+          reason=quiet
           if [ ! -s prev.cmp ]; then
             echo 'no baseline yet - building once to establish one'
             moved=yes
+            reason=baseline
           elif diff -u prev.cmp now.cmp > drift.diff; then
             echo 'no tracked source moved since the last check'
           else
             echo '--- upstream drift ---'
             cat drift.diff
             moved=yes
+            reason=drift
           fi
-          if [ "${{ github.event.inputs.force }}" = 'true' ]; then
-            echo 'forced'
+          # A forced run must not masquerade as drift - it has no diff to show.
+          if [ "${{ github.event.inputs.force }}" = 'true' ] && [ "$reason" != drift ]; then
+            echo 'forced run - nothing moved upstream'
             moved=yes
+            reason=forced
           fi
           echo "moved=$moved" >> "$GITHUB_OUTPUT"
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
 
       - name: Dispatch the canary build
         if: steps.decide.outputs.moved == 'yes'
@@ -154,7 +160,7 @@ jobs:
           git diff --staged --quiet || (git commit -qm 'ci: sync nms canary state [skip ci]' && git push -q origin HEAD:status-page)
 
       - name: Open or update the drift issue
-        if: steps.decide.outputs.moved == 'yes'
+        if: steps.decide.outputs.moved == 'yes' && steps.decide.outputs.reason != 'forced'
         run: |
           set -u
           gh label create canary --color FBCA04 --repo '${{ github.repository }}' --force || true
@@ -185,15 +191,24 @@ jobs:
           {
             echo '### NMS upstream canary'
             echo
-            if [ '${{ steps.decide.outputs.moved }}' = 'yes' ]; then
-              echo "Drift found - dispatched \`$CANARY_TARGET\` on android16-6.12 (no release)."
-              echo
-              echo '```diff'
-              cat drift.diff 2>/dev/null || echo '(no baseline yet)'
-              echo '```'
-            else
-              echo 'No tracked source moved. Nothing dispatched.'
-            fi
+            case '${{ steps.decide.outputs.reason }}' in
+              drift)
+                echo "Drift found - dispatched \`$CANARY_TARGET\` on android16-6.12 (no release)."
+                echo
+                echo '```diff'
+                cat drift.diff 2>/dev/null
+                echo '```'
+                ;;
+              baseline)
+                echo "No baseline yet - dispatched \`$CANARY_TARGET\` to establish one."
+                ;;
+              forced)
+                echo "Forced run - nothing moved upstream. Dispatched \`$CANARY_TARGET\` anyway to exercise the dispatch path. No issue opened."
+                ;;
+              *)
+                echo 'No tracked source moved. Nothing dispatched.'
+                ;;
+            esac
             echo
             echo '```'
             cat heads.txt
