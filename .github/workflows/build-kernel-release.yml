@@ -36,7 +36,7 @@ on:
           - android12-5.10
         default: A16
       op_target_model:
-        description: 'Optional exact/prefix model: OP12, OP13-CPH, OP-NORD-4, OP12-6.1.118. Case-sensitive. Empty = all.'
+        description: 'Optional exact/prefix model, or a comma-separated list: OP12, OP13-CPH, OP-NORD-4, OP12-6.1.118, or "OP-ACE-2,OP15-6.12.81". Case-sensitive. Empty = all.'
         required: false
         type: string
         default: ''
@@ -69,6 +69,14 @@ on:
         required: false
         type: boolean
         default: false
+      enable_susfs:
+        description: 'Build with SUSFS instead of NoMount. One hiding stack per build: this turns NoMount off for every device in the run, because both patch the same kernel functions. Only android16-6.12 has a kernel_fix variant set (incl. 6.12.81); 5.10/5.15/6.1/6.6 are unproven here and will fail loudly rather than mis-apply.'
+        type: boolean
+        default: false
+      susfs_ref:
+        description: 'susfs4ksu branch or 40-char commit to build against (empty = the gki-<android>-<kernel> branch matching each device). Only read when enable_susfs is on.'
+        type: string
+        default: ''
       enable_adios:
         description: 'Enable ADIOS I/O scheduler support (5.10/5.15/6.1/6.6/6.12 kernels)'
         required: false
@@ -80,10 +88,10 @@ on:
         type: string
         default: main
       patches_ref:
-        description: 'kernel_patches branch/ref for the _ghost/_hook/_pathhide cloaks and the apply script (default main; set a branch to validate before merge)'
+        description: 'kernel_patches branch/ref for the _ghost/_hook/_pathhide cloaks and the apply script (this susfs-test branch defaults to susfs-6.12.81-fix, which carries the 6.12.81 kernel_fix variant; main does not)'
         required: false
         type: string
-        default: main
+        default: susfs-6.12.81-fix
       spoof_config_gz:
         description: 'Report a stock config at /proc/config.gz instead of the real one (hides CONFIG_NOMOUNT, KSU, SUSFS, ADIOS). config = per device config stock_config key, on = every device built, off = never.'
         required: false
@@ -107,6 +115,16 @@ jobs:
     steps:
       - name: 📥 Checkout Code (to access configs/)
         uses: actions/checkout@v6
+
+      # The release notes and the metamodule asset are written around NoMount, so
+      # a SUSFS release would ship notes describing a stack the kernel does not
+      # have. SUSFS builds are test builds here.
+      - name: Refuse a SUSFS release
+        if: ${{ inputs.enable_susfs && inputs.make_release }}
+        shell: bash
+        run: |
+          echo "::error::enable_susfs cannot be combined with make_release: the release notes and the NoMount metamodule asset describe the NoMount stack. Run with make_release=false."
+          exit 1
 
       - name: 🔍 Generate build matrix
         id: set-matrix
@@ -164,9 +182,13 @@ jobs:
 
           if [ -n "$target_model" ]; then
             echo "🎯 Target model filter enabled: $target_model"
-            echo "   Matching exact model OR versioned model prefix."
+            echo "   Matching exact model OR versioned model prefix; comma-separated list allowed."
             filtered=$(echo "$filtered" | jq -c --arg target "$target_model" '
-              map(select(.model == $target or (.model | startswith($target + "-"))))
+              ($target | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $targets
+              | map(select(. as $row
+                  | $targets
+                  | map(. as $t | $row.model == $t or ($row.model | startswith($t + "-")))
+                  | any))
             ')
           else
             echo "ℹ️  No target model selected. Building all configs matching op_model='$input'."
@@ -360,9 +382,14 @@ jobs:
             echo "| 📦 Create release | ${{ inputs.make_release && '✅' || '❌' }} |"
             echo "| 🔄 Toolchain sync | ${{ (inputs.mirror_toolchains || inputs.make_release) && '✅' || '❌' }}${{ (!inputs.mirror_toolchains && inputs.make_release) && ' · auto for release' || '' }} |"
             echo "| 🧰 ADIOS · Debug artifacts | ${{ inputs.enable_adios && '✅' || '❌' }} · ${{ inputs.debug && '✅' || '❌' }} |"
+            echo "| 🫥 Hiding stack | ${{ inputs.enable_susfs && 'SUSFS' || 'NoMount' }}${{ (inputs.enable_susfs && inputs.susfs_ref != '') && format(' · `{0}`', inputs.susfs_ref) || '' }} |"
             echo ""
             echo ""
-            echo "**NoMount (hookless)** — \`Bouteillepleine/NoMount-Suite\`, version \`${{ steps.set-matrix.outputs.nomount_version }}\`"
+            if [ "${{ inputs.enable_susfs }}" = "true" ]; then
+              echo "**SUSFS** — \`simonpunk/susfs4ksu\`, fix set from \`Bouteillepleine/kernel_patches@${{ inputs.patches_ref || 'main' }}\`. NoMount is off for this run."
+            else
+              echo "**NoMount (hookless)** — \`Bouteillepleine/NoMount-Suite\`, version \`${{ steps.set-matrix.outputs.nomount_version }}\`"
+            fi
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
           
@@ -569,6 +596,8 @@ jobs:
           optimize_level: ${{ inputs.optimize_level }}
           build_timestamp: ${{ inputs.build_timestamp }}
           enable_adios: ${{ inputs.enable_adios }}
+          enable_susfs: ${{ inputs.enable_susfs }}
+          susfs_ref: ${{ inputs.susfs_ref }}
           nomount_ref: ${{ inputs.nomount_ref }}
           patches_ref: ${{ inputs.patches_ref }}
           spoof_config_gz: ${{ inputs.spoof_config_gz || 'config' }}
