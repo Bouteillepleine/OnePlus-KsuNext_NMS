@@ -36,13 +36,13 @@ Every release contains two things. Flash the kernel first, then add NoMount Suit
 
 ## SUSFS
 
-A kernel built with `enable_susfs` has **SUSFS** compiled in, patched from
-[simonpunk/susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) at build time (the version is in the
-release notes and the build summary). It goes in on top of NoMount, not instead of it, and the
-NoMount verifier runs again afterwards so a SUSFS hunk cannot quietly displace a cloak family.
+Every kernel has **SUSFS** compiled in, patched from [simonpunk/susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu)
+at build time (the version is in the release notes and the build summary). It goes in on top of
+NoMount, not instead of it, and the NoMount verifier runs again afterwards so a SUSFS hunk cannot
+quietly displace a cloak family.
 
-`susfs_ref` picks the susfs4ksu ref: empty follows the gki branch of each device, a 40-char SHA
-pins a release. No `.ko` and no loader module ride along in the kernel ZIP or the release assets.
+The `susfs_ref` workflow input picks the susfs4ksu ref: `auto` follows the gki branch of each device,
+a 40-char SHA pins a release, empty builds without SUSFS. No `.ko` and no loader module ride along.
 
 ---
 

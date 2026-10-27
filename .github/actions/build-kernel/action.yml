@@ -41,16 +41,11 @@ inputs:
     required: false
     type: boolean
     default: false
-  enable_susfs:
-    description: 'Build with SUSFS instead of NoMount. One hiding stack per build: this forces the NoMount steps off for the whole run, because both patch the same kernel functions (measured: neither apply order works). Needs a fix set for the resolved SUSFS version in kernel_patches/next/susfs_fix_patches.'
-    required: false
-    type: boolean
-    default: false
   susfs_ref:
-    description: 'susfs4ksu branch or commit to build against (default: the gki-<android>-<kernel> branch matching the device). Only read when enable_susfs is on.'
+    description: 'simonpunk/susfs4ksu ref to patch SUSFS into the kernel from. auto = the gki-<android>-<kernel> branch of each device, a branch/tag/40-char SHA pins it, empty = build without SUSFS. It goes in AFTER the NoMount stack; hunks that no longer fit are re-anchored by kernel_patches/scripts/susfs_patch_surgery.py and the NoMount verifier runs again afterwards.'
     required: false
     type: string
-    default: ''
+    default: auto
   nomount_ref:
     description: 'NoMount-Suite branch/ref to source the Prism engine src + patches from (default main; set a branch to validate it before it is released). The engine ships inside the Suite repo, under hookless/.'
     required: false
@@ -146,24 +141,6 @@ runs:
         fi
 
         echo "✅ KSU type validated: ${{ inputs.ksu_type }}"
-
-    # SUSFS is an ADDON, not a replacement: the NoMount stack goes in first and
-    # SUSFS is patched in after it, then the NoMount verifier runs again to prove
-    # the cloaks survived. Both touch fs/namei.c, fs/open.c, fs/stat.c,
-    # fs/proc/base.c and fs/proc/task_mmu.c, so susfs hunks stop fitting once
-    # NoMount has inserted lines in the same functions -- susfs_patch_surgery.py
-    # re-anchors those by the content they add. See scripts/apply_susfs_kernel.sh.
-    - name: Select hiding stack
-      shell: bash
-      run: |
-        set -euo pipefail
-        if [ "${{ inputs.enable_susfs }}" = "true" ]; then
-          echo "SUSFS_ENABLED=true" >> "$GITHUB_ENV"
-          echo "Hiding stack: NoMount (${OP_NMS:-false}) + SUSFS"
-        else
-          echo "SUSFS_ENABLED=false" >> "$GITHUB_ENV"
-          echo "Hiding stack: NoMount (${OP_NMS:-false})"
-        fi
 
     - name: Validate Inputs
       shell: bash
@@ -404,7 +381,6 @@ runs:
         DEBUG_ARTIFACTS_DIR="$GITHUB_WORKSPACE/debug_artifacts"
         KERNEL_PATCHES_DIR="$GITHUB_WORKSPACE/kernel_patches"
         KSU_DIR="$KERNEL_PLATFORM_DIR/KernelSU-Next"
-        SUSFS_DIR="$GITHUB_WORKSPACE/susfs4ksu"
         mkdir -p "$ARTIFACTS_DIR"
         mkdir -p "$DEBUG_ARTIFACTS_DIR"
         
@@ -417,7 +393,6 @@ runs:
         echo "DEBUG_ARTIFACTS_FOLDER=$DEBUG_ARTIFACTS_DIR" >> "$GITHUB_ENV"
         echo "KERNEL_PATCHES_FOLDER=$KERNEL_PATCHES_DIR" >> "$GITHUB_ENV"
         echo "KSU_FOLDER=$KSU_DIR" >> "$GITHUB_ENV"
-        echo "SUSFS_FOLDER=$SUSFS_DIR" >> "$GITHUB_ENV"
         
         DEBUG_ZIP_NAME="debug_${OP_MODEL}_${OP_OS_VERSION}.zip"
         echo "DEBUG_ZIP_NAME=$DEBUG_ZIP_NAME" >> "$GITHUB_ENV"
@@ -796,26 +771,42 @@ runs:
           echo "ADIOS_PATCHES_FOLDER=$GITHUB_WORKSPACE/bouton_kernel_patches/experimental" >> "$GITHUB_ENV"
         fi
 
-        if [ "${SUSFS_ENABLED:-false}" = "true" ]; then
-          # The patch filenames are keyed on the GKI branch name, so that key is
-          # derived from the device even when susfs_ref points somewhere else.
-          SUSFS_GKI_BRANCH="gki-${ANDROID_VER}-${KERNEL_VER}"
-          _sref="${{ inputs.susfs_ref }}"
-          if [ -z "$_sref" ]; then
-            retry_clone "https://gitlab.com/simonpunk/susfs4ksu.git" "$SUSFS_GKI_BRANCH" "1" "susfs4ksu"
-          elif [[ "$_sref" =~ ^[0-9a-f]{40}$ ]]; then
-            retry_clone "https://gitlab.com/simonpunk/susfs4ksu.git" "$SUSFS_GKI_BRANCH" "0" "susfs4ksu"
-            git -C susfs4ksu checkout --detach "$_sref"
+        SUSFS_REF='${{ inputs.susfs_ref }}'
+        SUSFS_URL="https://gitlab.com/simonpunk/susfs4ksu.git"
+        SUSFS_BRANCH="gki-${ANDROID_VER}-${KERNEL_VER}"
+        SUSFS_DIR="$GITHUB_WORKSPACE/susfs4ksu"
+        rm -rf "$SUSFS_DIR"
+        if [ -z "$SUSFS_REF" ]; then
+          echo "SUSFS_ON=false" >> "$GITHUB_ENV"
+          echo "susfs_ref is empty: building without SUSFS"
+        else
+          # The patch filenames are keyed on the GKI branch of the device, so that
+          # key is derived here even when the ref points somewhere else.
+          if [ "$SUSFS_REF" = auto ]; then
+            retry_clone "$SUSFS_URL" "$SUSFS_BRANCH" "1" "$SUSFS_DIR"
+          elif [[ "$SUSFS_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            git init -q "$SUSFS_DIR"
+            git -C "$SUSFS_DIR" remote add origin "$SUSFS_URL"
+            attempt=1
+            until git -C "$SUSFS_DIR" fetch --depth 1 origin "$SUSFS_REF"; do
+              [ "$attempt" -lt 3 ] || { echo "::error::could not fetch susfs4ksu@$SUSFS_REF"; exit 1; }
+              sleep $((attempt++ * 5))
+            done
+            git -C "$SUSFS_DIR" checkout -q FETCH_HEAD
           else
-            retry_clone "https://gitlab.com/simonpunk/susfs4ksu.git" "$_sref" "1" "susfs4ksu"
+            retry_clone "$SUSFS_URL" "$SUSFS_REF" "1" "$SUSFS_DIR"
           fi
-          if [ ! -f "susfs4ksu/kernel_patches/50_add_susfs_in_${SUSFS_GKI_BRANCH}.patch" ]; then
-            echo "::error::susfs4ksu has no 50_add_susfs_in_${SUSFS_GKI_BRANCH}.patch — this kernel is not supported by the ref that was cloned."
+          if [ ! -f "$SUSFS_DIR/kernel_patches/50_add_susfs_in_${SUSFS_BRANCH}.patch" ]; then
+            echo "::error::susfs4ksu@$SUSFS_REF carries no kernel_patches/50_add_susfs_in_${SUSFS_BRANCH}.patch; pass a ref from the $SUSFS_BRANCH branch or leave susfs_ref on auto"
             exit 1
           fi
-          echo "SUSFS_GKI_BRANCH=$SUSFS_GKI_BRANCH" >> "$GITHUB_ENV"
-          echo "SUSFS_SHA=$(git -C susfs4ksu rev-parse HEAD)" >> "$GITHUB_ENV"
-          echo "susfs4ksu: ${_sref:-$SUSFS_GKI_BRANCH} @ $(git -C susfs4ksu rev-parse --short HEAD)"
+          {
+            echo "SUSFS_ON=true"
+            echo "SUSFS_FOLDER=$SUSFS_DIR"
+            echo "SUSFS_KERNEL_BRANCH=$SUSFS_BRANCH"
+            echo "SUSFS_COMMIT_SHA=$(git -C "$SUSFS_DIR" rev-parse HEAD)"
+          } >> "$GITHUB_ENV"
+          echo "susfs4ksu: $SUSFS_REF = $(git -C "$SUSFS_DIR" log --oneline -1)"
         fi
 
         echo "✅ Dependencies cloned"
@@ -1077,7 +1068,7 @@ runs:
         bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" verify
 
     - name: Apply SUSFS
-      if: ${{ env.SUSFS_ENABLED == 'true' }}
+      if: ${{ env.SUSFS_ON == 'true' }}
       shell: bash
       run: |
         set -euo pipefail
@@ -1175,8 +1166,7 @@ runs:
         # re-anchored by the content it adds, applies the remainder, and asserts
         # the result. It is written to run on a tree that ALREADY carries
         # NoMount, which is why the NoMount steps come first.
-        SUSFS_KERNEL_BRANCH="$SUSFS_GKI_BRANCH" \
-          bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_susfs_kernel.sh"
+        bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_susfs_kernel.sh"
         cd "$COMMON_KERNEL_FOLDER"
         if ! grep -q 'ksu_handle_faccessat' fs/open.c; then
           echo "::error::fs/open.c has no ksu_handle_faccessat after the SUSFS kernel patch; the inline hooks did not land."
@@ -2170,7 +2160,7 @@ runs:
         # the whole SUSFS set on a tree that lacks it and the kernel builds without
         # any of the hiding it was asked for. The list comes from the Apply SUSFS
         # step, so there is one place that decides which options are expected.
-        if [ "${SUSFS_ENABLED:-false}" = true ]; then
+        if [ "${SUSFS_ON:-false}" = true ]; then
           REQUIRED_SYMS="$REQUIRED_SYMS ${SUSFS_REQUIRED_SYMS:?Apply SUSFS did not publish SUSFS_REQUIRED_SYMS}"
         fi
         for sym in $REQUIRED_SYMS; do
@@ -2478,7 +2468,7 @@ runs:
           if [ "${{ env.OP_NMS }}" = true ]; then
             echo "NoMount Version: ${NMVER:-unknown}"
           fi
-          if [ "${{ env.SUSFS_ENABLED }}" = true ]; then
+          if [ "${{ env.SUSFS_ON }}" = true ]; then
             echo "SUSFS Version: ${SUSVER:-unknown}"
           fi
           echo "Optimization: ${{ inputs.optimize_level }}"
@@ -2514,7 +2504,7 @@ runs:
         SUM_HEAD="🎯 <b>${{ env.OP_MODEL }}</b> — ${{ steps.save_metadata.outputs.kernel_version }}"
         SUM_HEAD="${SUM_HEAD} · ⚡KernelSU Next ${KSUVER:-?}"
         if [ "${{ env.OP_NMS }}" = true ]; then SUM_HEAD="${SUM_HEAD} · NoMount ${NMVER:-?}"; fi
-        if [ "${{ env.SUSFS_ENABLED }}" = true ]; then SUM_HEAD="${SUM_HEAD} · SUSFS ${SUSVER:-?}"; fi
+        if [ "${{ env.SUSFS_ON }}" = true ]; then SUM_HEAD="${SUM_HEAD} · SUSFS ${SUSVER:-?}"; fi
         SUM_HEAD="${SUM_HEAD} · ⏱ ${{ steps.collect_stats.outputs.build_time }}s"
         if [ "${{ steps.collect_stats.outputs.warnings_count }}" != "0" ]; then
           SUM_HEAD="${SUM_HEAD} · ⚠️ ${{ steps.collect_stats.outputs.warnings_count }}"
@@ -2546,9 +2536,9 @@ runs:
             echo "| **NoMount Version** | ${NMVER:-unknown} |"
           fi
 
-          if [ "${{ env.SUSFS_ENABLED }}" = true ]; then
+          if [ "${{ env.SUSFS_ON }}" = true ]; then
             echo "| **SUSFS Version** | ${SUSVER:-unknown} |"
-            echo "| **SUSFS Commit** | [\`${SUSFS_SHA:0:8}\`](https://gitlab.com/simonpunk/susfs4ksu/-/commit/${SUSFS_SHA}) |"
+            echo "| **SUSFS Commit** | [\`${SUSFS_COMMIT_SHA:0:8}\`](https://gitlab.com/simonpunk/susfs4ksu/-/commit/${SUSFS_COMMIT_SHA}) |"
           fi
           
           echo ""

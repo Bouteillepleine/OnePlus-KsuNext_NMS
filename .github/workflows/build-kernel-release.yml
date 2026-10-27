@@ -69,14 +69,11 @@ on:
         required: false
         type: boolean
         default: false
-      enable_susfs:
-        description: 'Build with SUSFS instead of NoMount. One hiding stack per build: this turns NoMount off for every device in the run, because both patch the same kernel functions. kernel_fix variants exist for 5.15, 6.1, 6.6 and 6.12 (incl. 6.12.81); a tree shape with no matching variant fails loudly rather than mis-applying.'
-        type: boolean
-        default: false
       susfs_ref:
-        description: 'susfs4ksu branch or 40-char commit to build against (empty = the gki-<android>-<kernel> branch matching each device). Only read when enable_susfs is on.'
+        description: 'simonpunk/susfs4ksu ref to patch SUSFS into every kernel. auto = the gki branch matching each device, a branch/tag/40-char SHA pins it (a release you want to reproduce should pass a SHA), empty = build without SUSFS.'
+        required: false
         type: string
-        default: ''
+        default: auto
       enable_adios:
         description: 'Enable ADIOS I/O scheduler support (5.10/5.15/6.1/6.6/6.12 kernels)'
         required: false
@@ -117,16 +114,6 @@ jobs:
     steps:
       - name: 📥 Checkout Code (to access configs/)
         uses: actions/checkout@v6
-
-      # The release notes and the metamodule asset are written around NoMount, so
-      # a SUSFS release would ship notes describing a stack the kernel does not
-      # have. SUSFS builds are test builds here.
-      - name: Refuse a SUSFS release
-        if: ${{ inputs.enable_susfs && inputs.make_release }}
-        shell: bash
-        run: |
-          echo "::error::enable_susfs cannot be combined with make_release: the release notes and the NoMount metamodule asset describe the NoMount stack. Run with make_release=false."
-          exit 1
 
       - name: 🔍 Generate build matrix
         id: set-matrix
@@ -327,12 +314,12 @@ jobs:
           # was just built rather than a parallel list that could drift.
           susfs_plan="off"
           susfs_version=""
-          if [ "${{ inputs.enable_susfs }}" = "true" ]; then
-            SUSFS_REF='${{ inputs.susfs_ref }}'
+          SUSFS_REF='${{ inputs.susfs_ref }}'
+          if [ -n "$SUSFS_REF" ]; then
             susfs_plan=""
             for key in $(echo "$merged_matrix" | jq -r '.[] | "\(.android_version)-\(.kernel_version)"' | sort -u); do
               branch="gki-$key"
-              ref="${SUSFS_REF:-$branch}"
+              ref="$SUSFS_REF"; [ "$ref" = auto ] && ref="$branch"
               ver=""
               for attempt in 1 2 3; do
                 ver="$(curl -fsSL --max-time 30 "https://gitlab.com/simonpunk/susfs4ksu/-/raw/$ref/kernel_patches/include/linux/susfs.h" 2>/dev/null \
@@ -348,7 +335,7 @@ jobs:
                 susfs_version="mixed"
               fi
             done
-            [ -z "$SUSFS_REF" ] || susfs_plan="ref $SUSFS_REF · $susfs_plan"
+            [ "$SUSFS_REF" = auto ] || susfs_plan="ref $SUSFS_REF · $susfs_plan"
             echo "  SUSFS: $susfs_plan"
           fi
           echo "susfs_plan=$susfs_plan" >> "$GITHUB_OUTPUT"
@@ -417,11 +404,11 @@ jobs:
             echo "| 📦 Create release | ${{ inputs.make_release && '✅' || '❌' }} |"
             echo "| 🔄 Toolchain sync | ${{ (inputs.mirror_toolchains || inputs.make_release) && '✅' || '❌' }}${{ (!inputs.mirror_toolchains && inputs.make_release) && ' · auto for release' || '' }} |"
             echo "| 🧰 ADIOS · Debug artifacts | ${{ inputs.enable_adios && '✅' || '❌' }} · ${{ inputs.debug && '✅' || '❌' }} |"
-            echo "| 🫥 Hiding stack | NoMount${{ inputs.enable_susfs && ' + SUSFS' || '' }} |"
+            echo "| 🫥 Hiding stack | NoMount${{ inputs.susfs_ref != '' && ' + SUSFS' || '' }} |"
             echo ""
             echo ""
             echo "**NoMount (hookless)** — \`Bouteillepleine/NoMount-Suite\`, version \`${{ steps.set-matrix.outputs.nomount_version }}\`"
-            if [ "${{ inputs.enable_susfs }}" = "true" ]; then
+            if [ -n "${{ inputs.susfs_ref }}" ]; then
               echo ""
               echo "**SUSFS** — \`simonpunk/susfs4ksu\` · "'${{ steps.set-matrix.outputs.susfs_plan }}'
             fi
@@ -631,7 +618,6 @@ jobs:
           optimize_level: ${{ inputs.optimize_level }}
           build_timestamp: ${{ inputs.build_timestamp }}
           enable_adios: ${{ inputs.enable_adios }}
-          enable_susfs: ${{ inputs.enable_susfs }}
           susfs_ref: ${{ inputs.susfs_ref }}
           nomount_ref: ${{ inputs.nomount_ref }}
           patches_ref: ${{ inputs.patches_ref }}
