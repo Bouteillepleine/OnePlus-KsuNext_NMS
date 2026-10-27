@@ -1931,6 +1931,12 @@ runs:
           scripts/config --file "$OUT/.config" -d "$sym" 2>/dev/null || true
         done
 
+        case "$OP_MODEL" in
+          OP-N6X|OP-N6X-*)
+            scripts/config --file "$OUT/.config" -d OPLUS_NFC
+            ;;
+        esac
+
         make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" O="$OUT" olddefconfig
 
         for sym in CONFIG_KSU; do
