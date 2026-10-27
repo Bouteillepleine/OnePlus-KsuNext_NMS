@@ -34,24 +34,15 @@ Every release contains two things. Flash the kernel first, then add NoMount Suit
 > [!IMPORTANT]
 > **The kernel on its own does nothing visible.** NoMount is *compiled in* but stays **dormant** until the **NoMount Suite** module activates it. NoMount Suite is the part that carries your injection rules, the WebUI, and the spoofing. Think of it like a Magisk/KSU module. **You need both.**
 
-## Optional: SUSFS
+## SUSFS
 
-SUSFS is **compiled into the kernel** when a build asks for it, patched from
-[simonpunk/susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) at build time. The version is in
-the release notes and the build summary, not in the ZIP name. There is no module to load and no
-`ksud susfs autoload` to enable: a kernel either has SUSFS in it or it does not.
+A kernel built with `enable_susfs` has **SUSFS** compiled in, patched from
+[simonpunk/susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) at build time (the version is in the
+release notes and the build summary). It goes in on top of NoMount, not instead of it, and the
+NoMount verifier runs again afterwards so a SUSFS hunk cannot quietly displace a cloak family.
 
-It is an **addon, not a swap**. NoMount still does the mountless serving, SUSFS goes in on top of
-it, and the NoMount verifier runs again afterwards so a SUSFS hunk cannot quietly displace one of
-the cloak families. Builds without SUSFS behave exactly as before.
-
-**NoMount needs nothing from it:** nothing the engine serves is a mount. SUSFS is there for whatever
-hiding you choose to leave to it, driven by the `ksu_susfs` tool from the upstream module, which
-these releases do not ship. No `.ko` and no loader module ride along in the kernel ZIP or the
-release assets.
-
-`enable_susfs` turns it on for a run and `susfs_ref` pins the susfs4ksu ref, defaulting to the
-`gki-<android>-<kernel>` branch matching each device.
+`susfs_ref` picks the susfs4ksu ref: empty follows the gki branch of each device, a 40-char SHA
+pins a release. No `.ko` and no loader module ride along in the kernel ZIP or the release assets.
 
 ---
 
