@@ -41,6 +41,16 @@ inputs:
     required: false
     type: boolean
     default: false
+  enable_susfs:
+    description: 'Build with SUSFS instead of NoMount. One hiding stack per build: this forces the NoMount steps off for the whole run, because both patch the same kernel functions. Needs a fix set for the resolved SUSFS version in kernel_patches/next/susfs_fix_patches.'
+    required: false
+    type: boolean
+    default: false
+  susfs_ref:
+    description: 'susfs4ksu branch or commit to build against (default: the gki-<android>-<kernel> branch matching the device). Only read when enable_susfs is on.'
+    required: false
+    type: string
+    default: ''
   nomount_ref:
     description: 'NoMount-Suite branch/ref to source the Prism engine src + patches from (default main; set a branch to validate it before it is released). The engine ships inside the Suite repo, under hookless/.'
     required: false
@@ -136,6 +146,30 @@ runs:
         fi
 
         echo "✅ KSU type validated: ${{ inputs.ksu_type }}"
+
+    # NoMount and SUSFS both patch fs/namei.c, fs/open.c, fs/stat.c and
+    # fs/proc/task_mmu.c, and apply_nomount_stack.sh runs at fuzz 0, so a tree
+    # carrying one cannot take the other. Rather than fail every build (every
+    # device config on this branch sets NMS), enabling SUSFS turns NoMount off
+    # for the run and says so.
+    - name: Select hiding stack
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ "${{ inputs.enable_susfs }}" = "true" ]; then
+          echo "SUSFS_ENABLED=true" >> "$GITHUB_ENV"
+          echo "OP_NMS=false" >> "$GITHUB_ENV"
+          echo "Hiding stack: SUSFS"
+          if [ "${OP_NMS:-false}" = "true" ]; then
+            echo "::warning::enable_susfs overrides this device's NMS=true; NoMount is not applied to this build."
+          fi
+        elif [ "${OP_NMS:-false}" = "true" ]; then
+          echo "SUSFS_ENABLED=false" >> "$GITHUB_ENV"
+          echo "Hiding stack: NoMount"
+        else
+          echo "SUSFS_ENABLED=false" >> "$GITHUB_ENV"
+          echo "Hiding stack: none"
+        fi
 
     - name: Validate Inputs
       shell: bash
@@ -376,6 +410,7 @@ runs:
         DEBUG_ARTIFACTS_DIR="$GITHUB_WORKSPACE/debug_artifacts"
         KERNEL_PATCHES_DIR="$GITHUB_WORKSPACE/kernel_patches"
         KSU_DIR="$KERNEL_PLATFORM_DIR/KernelSU-Next"
+        SUSFS_DIR="$GITHUB_WORKSPACE/susfs4ksu"
         mkdir -p "$ARTIFACTS_DIR"
         mkdir -p "$DEBUG_ARTIFACTS_DIR"
         
@@ -388,6 +423,7 @@ runs:
         echo "DEBUG_ARTIFACTS_FOLDER=$DEBUG_ARTIFACTS_DIR" >> "$GITHUB_ENV"
         echo "KERNEL_PATCHES_FOLDER=$KERNEL_PATCHES_DIR" >> "$GITHUB_ENV"
         echo "KSU_FOLDER=$KSU_DIR" >> "$GITHUB_ENV"
+        echo "SUSFS_FOLDER=$SUSFS_DIR" >> "$GITHUB_ENV"
         
         DEBUG_ZIP_NAME="debug_${OP_MODEL}_${OP_OS_VERSION}.zip"
         echo "DEBUG_ZIP_NAME=$DEBUG_ZIP_NAME" >> "$GITHUB_ENV"
@@ -765,7 +801,28 @@ runs:
         if [ "${{ inputs.enable_adios }}" = "true" ]; then
           echo "ADIOS_PATCHES_FOLDER=$GITHUB_WORKSPACE/bouton_kernel_patches/experimental" >> "$GITHUB_ENV"
         fi
-        
+
+        if [ "${SUSFS_ENABLED:-false}" = "true" ]; then
+          # The patch filenames are keyed on the GKI branch name, so that key is
+          # derived from the device even when susfs_ref points somewhere else.
+          SUSFS_GKI_BRANCH="gki-${ANDROID_VER}-${KERNEL_VER}"
+          _sref="${{ inputs.susfs_ref }}"
+          if [ -z "$_sref" ]; then
+            retry_clone "https://gitlab.com/simonpunk/susfs4ksu.git" "$SUSFS_GKI_BRANCH" "1" "susfs4ksu"
+          elif [[ "$_sref" =~ ^[0-9a-f]{40}$ ]]; then
+            retry_clone "https://gitlab.com/simonpunk/susfs4ksu.git" "$SUSFS_GKI_BRANCH" "0" "susfs4ksu"
+            git -C susfs4ksu checkout --detach "$_sref"
+          else
+            retry_clone "https://gitlab.com/simonpunk/susfs4ksu.git" "$_sref" "1" "susfs4ksu"
+          fi
+          if [ ! -f "susfs4ksu/kernel_patches/50_add_susfs_in_${SUSFS_GKI_BRANCH}.patch" ]; then
+            echo "::error::susfs4ksu has no 50_add_susfs_in_${SUSFS_GKI_BRANCH}.patch — this kernel is not supported by the ref that was cloned."
+            exit 1
+          fi
+          echo "SUSFS_GKI_BRANCH=$SUSFS_GKI_BRANCH" >> "$GITHUB_ENV"
+          echo "SUSFS_SHA=$(git -C susfs4ksu rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "susfs4ksu: ${_sref:-$SUSFS_GKI_BRANCH} @ $(git -C susfs4ksu rev-parse --short HEAD)"
+        fi
 
         echo "✅ Dependencies cloned"
         echo "::endgroup::"
@@ -987,6 +1044,184 @@ runs:
       shell: bash
       run: |
         bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/fix_ksu_cfi_symbol_calls.sh"
+
+    # SUSFS, in place of NoMount. Three parts, in this order: the SUSFS sources
+    # into common/, the KernelSU-Next side (upstream's enable patch plus our
+    # per-rejected-file fix set, because the enable patch is written against
+    # tiann's tree), then the kernel side. Every reject is either repaired by a
+    # named patch or fails the build -- a half-applied hiding stack boots and
+    # lies about what it hides, which is worse than a red run.
+    - name: Apply SUSFS
+      if: ${{ env.SUSFS_ENABLED == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Apply SUSFS"
+
+        SUSFS_KP="$SUSFS_FOLDER/kernel_patches"
+        FIX_BASE="$BOUTEILLE_KERNEL_PATCHES_FOLDER/next/susfs_fix_patches"
+
+        cp "$SUSFS_KP/fs/"*.c "$COMMON_KERNEL_FOLDER/fs/"
+        cp "$SUSFS_KP/include/linux/"*.h "$COMMON_KERNEL_FOLDER/include/linux/"
+
+        SUSVER="$(grep '#define SUSFS_VERSION' "$COMMON_KERNEL_FOLDER/include/linux/susfs.h" | awk -F'"' '{print $2}')"
+        if [ -z "$SUSVER" ]; then
+          echo "::error::Could not read SUSFS_VERSION from include/linux/susfs.h"
+          exit 1
+        fi
+        echo "SUSVER=$SUSVER" >> "$GITHUB_ENV"
+        echo "SusFS version: $SUSVER"
+
+        FIXDIR="$FIX_BASE/$SUSVER"
+        if [ ! -d "$FIXDIR" ]; then
+          echo "::error::No KernelSU-Next fix set for SUSFS $SUSVER in kernel_patches/next/susfs_fix_patches."
+          echo "::error::Present: $(ls "$FIX_BASE" | tr '\n' ' ')"
+          echo "::error::Build a $SUSVER fix set, or pin susfs_ref to a version that has one."
+          exit 1
+        fi
+        echo "fix set: next/susfs_fix_patches/$SUSVER (kernel_patches@${{ inputs.patches_ref || 'main' }})"
+
+        # ---- KernelSU-Next side -------------------------------------------
+        cd "$KSU_FOLDER"
+        patch -p1 --forward < "$SUSFS_KP/KernelSU/10_enable_susfs_for_ksu.patch" || true
+
+        rejects="$(find ./kernel -maxdepth 2 -name '*.rej' | sort)"
+        if [ -z "$rejects" ]; then
+          echo "-- the enable patch applied cleanly; no fix patches needed"
+        else
+          echo "-- rejected by the enable patch:"
+          echo "$rejects" | sed 's/^/     /'
+        fi
+        for rej in $rejects; do
+          base="$(basename "$rej" .rej)"
+          fix="$FIXDIR/fix_$base.patch"
+          if [ ! -f "$fix" ]; then
+            echo "::error::$base was rejected and fix_$base.patch is not in the $SUSVER fix set."
+            echo "::error::KernelSU-Next moved under SUSFS $SUSVER; refresh the fix set before building."
+            exit 1
+          fi
+          echo "-- fix_$base.patch"
+          patch -p1 --forward -F0 < "$fix"
+          rm -f "$rej"
+        done
+
+        echo "-- overwrite_hook_mode.patch"
+        patch -p1 --forward < "$FIXDIR/overwrite_hook_mode.patch"
+        echo "-- ksu_toolkit.patch"
+        patch -p1 --forward < "$FIXDIR/ksu_toolkit.patch"
+
+        # The fix set takes KernelSU-Next's own hook subsystem out of the Kbuild
+        # because the kernel-side patch below supplies inline hooks instead. If
+        # both were live the syscall entries would be hooked twice.
+        if grep -q 'hook/syscall_hook_manager\.o' kernel/Kbuild; then
+          echo "::error::kernel/Kbuild still builds the KernelSU-Next hook subsystem after the fix set; inline and manual hooks would both be live."
+          exit 1
+        fi
+
+        left="$(find ./kernel -maxdepth 2 -name '*.rej' | sort)"
+        if [ -n "$left" ]; then
+          echo "::error::KernelSU-Next rejects left after the fix set:"
+          echo "$left" | sed 's/^/     /'
+          exit 1
+        fi
+        find . -name '*.orig' -delete
+
+        # ---- kernel side ---------------------------------------------------
+        # Default fuzz on purpose. At --fuzz=3 the fs/proc/task_mmu.c hunks land
+        # inside enum clear_refs_types on OnePlus trees and the tree stops
+        # compiling; the rejects are carried by kernel_fix_<branch>.patch below.
+        cd "$COMMON_KERNEL_FOLDER"
+        patch -p1 --forward < "$SUSFS_KP/50_add_susfs_in_${SUSFS_GKI_BRANCH}.patch" || true
+
+        krej="$(find . -name '*.rej' | sort)"
+        kfix="$FIXDIR/kernel_fix_${SUSFS_GKI_BRANCH}.patch"
+        if [ -n "$krej" ]; then
+          echo "-- rejected by the kernel patch:"
+          echo "$krej" | sed 's/^/     /'
+          if [ ! -f "$kfix" ]; then
+            echo "::error::The SUSFS kernel patch rejected hunks on this tree and the $SUSVER fix set has no kernel_fix_${SUSFS_GKI_BRANCH}.patch to carry them."
+            exit 1
+          fi
+          # A reject in a file kernel_fix does not touch would otherwise be
+          # deleted below and never noticed, so name those instead of guessing.
+          unhandled="$(comm -23 \
+            <(echo "$krej" | sed -e 's|^\./||' -e 's|\.rej$||' | sort -u) \
+            <(grep '^+++ b/' "$kfix" | sed 's|^+++ b/||' | sort -u))"
+          if [ -n "$unhandled" ]; then
+            echo "::error::The SUSFS kernel patch rejected hunks in files kernel_fix_${SUSFS_GKI_BRANCH}.patch does not carry:"
+            echo "$unhandled" | sed 's/^/     /'
+            exit 1
+          fi
+          echo "-- kernel_fix_${SUSFS_GKI_BRANCH}.patch"
+          patch -p1 --forward < "$kfix"
+          find . -name '*.rej' -delete
+        elif [ -f "$kfix" ]; then
+          echo "-- nothing rejected; kernel_fix_${SUSFS_GKI_BRANCH}.patch not needed on this tree"
+        fi
+        find . -name '*.orig' -delete
+
+        # The one misplacement that compiles elsewhere but not here: a SUSFS
+        # guard landing between the braces of enum clear_refs_types.
+        if awk '/^enum clear_refs_types \{/{f=1} f&&/CONFIG_KSU_SUSFS/{bad=1} f&&/^\};/{f=0} END{exit !bad}' fs/proc/task_mmu.c; then
+          echo "::error::A SUSFS guard landed inside enum clear_refs_types in fs/proc/task_mmu.c — the kernel patch was misplaced."
+          exit 1
+        fi
+        if ! grep -q 'ksu_handle_faccessat' fs/open.c; then
+          echo "::error::fs/open.c has no ksu_handle_faccessat after the SUSFS kernel patch; the inline hooks did not land."
+          exit 1
+        fi
+
+        # What we set each SUSFS option to. Checked against the options the tree
+        # actually defines rather than trusted: an option that appears upstream
+        # and is not listed here takes its own Kconfig default silently, and one
+        # that disappears leaves a line in gki_defconfig that still reads as
+        # enabled while olddefconfig drops it. Both have happened.
+        declare -A SUSFS_POLICY=(
+          [KSU_SUSFS]=y
+          [KSU_SUSFS_SUS_PATH]=y
+          [KSU_SUSFS_SUS_MOUNT]=y
+          [KSU_SUSFS_SUS_KSTAT]=y
+          [KSU_SUSFS_SUS_MAP]=y
+          [KSU_SUSFS_OPEN_REDIRECT]=y
+          [KSU_SUSFS_SPOOF_UNAME]=y
+          [KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG]=y
+          [KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS]=y
+          [KSU_SUSFS_ENABLE_LOG]=y
+        )
+        defined="$(grep -oE '^config KSU_SUSFS[A-Z_]*' "$KSU_FOLDER/kernel/Kconfig" | awk '{print $2}' | sort -u)"
+        listed="$(printf '%s\n' "${!SUSFS_POLICY[@]}" | sort)"
+        undecided="$(comm -13 <(echo "$listed") <(echo "$defined"))"
+        vanished="$(comm -23 <(echo "$listed") <(echo "$defined"))"
+        if [ -n "$undecided" ]; then
+          echo "::error::SUSFS $SUSVER defines options this builder has no setting for, so they would take their Kconfig default:"
+          echo "$undecided" | sed 's/^/     /'
+          echo "::error::Add each one to SUSFS_POLICY in this step with an explicit y or n."
+          exit 1
+        fi
+        if [ -n "$vanished" ]; then
+          echo "::error::This builder sets SUSFS options that $SUSVER no longer defines; they would sit in gki_defconfig reading as enabled:"
+          echo "$vanished" | sed 's/^/     /'
+          echo "::error::Drop each one from SUSFS_POLICY in this step."
+          exit 1
+        fi
+
+        echo "Add SUSFS Configuration Settings"
+        for sym in $listed; do
+          echo "CONFIG_${sym}=${SUSFS_POLICY[$sym]}"
+        done | tee -a "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" | sed 's/^/  /'
+
+        # The build step re-checks these after olddefconfig, from this one list.
+        susfs_required=""
+        for sym in $listed; do
+          if [ "${SUSFS_POLICY[$sym]}" = "y" ]; then
+            susfs_required="$susfs_required CONFIG_$sym"
+          fi
+        done
+        echo "SUSFS_REQUIRED_SYMS=${susfs_required# }" >> "$GITHUB_ENV"
+
+        echo "$SUSVER" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
+        echo "✅ SUSFS $SUSVER applied"
+        echo "::endgroup::"
 
     - name: Apply NoMount (hookless) Patch
       if: ${{ env.OP_NMS == 'true' }}
@@ -1939,7 +2174,15 @@ runs:
 
         make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" O="$OUT" olddefconfig
 
-        for sym in CONFIG_KSU; do
+        REQUIRED_SYMS="CONFIG_KSU"
+        # KSU_SUSFS depends on THREAD_INFO_IN_TASK, so olddefconfig silently drops
+        # the whole SUSFS set on a tree that lacks it and the kernel builds without
+        # any of the hiding it was asked for. The list comes from the Apply SUSFS
+        # step, so there is one place that decides which options are expected.
+        if [ "${SUSFS_ENABLED:-false}" = true ]; then
+          REQUIRED_SYMS="$REQUIRED_SYMS ${SUSFS_REQUIRED_SYMS:?Apply SUSFS did not publish SUSFS_REQUIRED_SYMS}"
+        fi
+        for sym in $REQUIRED_SYMS; do
           grep -q "^${sym}=y" "$OUT/.config" \
             || { echo "::error::${sym} was dropped by olddefconfig (not defined by the KSU source?)"; exit 1; }
         done
@@ -2193,6 +2436,8 @@ runs:
         # branch carries it; a non-NoMount build has no engine to name.
         if [ "${{ env.OP_NMS }}" = true ]; then
           ZIP_NAME="AK3_${ZIP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_${{ inputs.ksu_type }}_${KSUVER:-unknown}_NM${NMVER:-unknown}.zip"
+        elif [ "${{ env.SUSFS_ENABLED }}" = true ]; then
+          ZIP_NAME="AK3_${ZIP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_${{ inputs.ksu_type }}_${KSUVER:-unknown}_SUSFS${SUSVER:-unknown}.zip"
         else
           ZIP_NAME="AK3_${ZIP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_${{ inputs.ksu_type }}_${KSUVER:-unknown}.zip"
         fi
@@ -2247,6 +2492,10 @@ runs:
           if [ "${{ env.OP_NMS }}" = true ]; then
             echo "NoMount Version: ${NMVER:-unknown}"
           fi
+          if [ "${{ env.SUSFS_ENABLED }}" = true ]; then
+            echo "SusFS Version: ${SUSVER:-unknown}"
+            echo "SusFS commit SHA: ${SUSFS_SHA:-unknown}"
+          fi
           echo "Optimization: ${{ inputs.optimize_level }}"
           echo "Clean Build: ${{ inputs.clean }}"
           echo ""
@@ -2280,6 +2529,7 @@ runs:
         SUM_HEAD="🎯 <b>${{ env.OP_MODEL }}</b> — ${{ steps.save_metadata.outputs.kernel_version }}"
         SUM_HEAD="${SUM_HEAD} · ⚡KernelSU Next ${KSUVER:-?}"
         if [ "${{ env.OP_NMS }}" = true ]; then SUM_HEAD="${SUM_HEAD} · NoMount ${NMVER:-?}"; fi
+        if [ "${{ env.SUSFS_ENABLED }}" = true ]; then SUM_HEAD="${SUM_HEAD} · SusFS ${SUSVER:-?}"; fi
         SUM_HEAD="${SUM_HEAD} · ⏱ ${{ steps.collect_stats.outputs.build_time }}s"
         if [ "${{ steps.collect_stats.outputs.warnings_count }}" != "0" ]; then
           SUM_HEAD="${SUM_HEAD} · ⚠️ ${{ steps.collect_stats.outputs.warnings_count }}"
@@ -2309,6 +2559,10 @@ runs:
           
           if [ "${{ env.OP_NMS }}" = true ]; then
             echo "| **NoMount Version** | ${NMVER:-unknown} |"
+          fi
+
+          if [ "${{ env.SUSFS_ENABLED }}" = true ]; then
+            echo "| **SusFS Version** | ${SUSVER:-unknown} |"
           fi
           
           echo ""
