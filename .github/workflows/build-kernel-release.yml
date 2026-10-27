@@ -109,6 +109,7 @@ jobs:
       ksu_resolved_hash:    ${{ steps.set-matrix.outputs.ksu_resolved_hash }}
       ksu_options_normalized: ${{ steps.set-matrix.outputs.ksu_options_normalized }}
       nomount_version: ${{ steps.set-matrix.outputs.nomount_version }}
+      susfs_version: ${{ steps.set-matrix.outputs.susfs_version }}
     env:
       GH_TOKEN: ${{ github.token }}
       GH_HTTP_TIMEOUT: 600
@@ -319,6 +320,29 @@ jobs:
 
           echo "  ✅ NoMount version: $nomount_version"
 
+          # SUSFS version, resolved the same way so the plan can state it before
+          # anything builds. One read per active GKI key, because susfs4ksu
+          # version-bumps each gki-* branch separately and they can disagree.
+          susfs_version=""
+          if [ "${{ inputs.enable_susfs }}" = "true" ]; then
+            susfs_seen=""
+            for key in ${active_keys[@]:-}; do
+              sref="${{ inputs.susfs_ref }}"
+              [ -n "$sref" ] || sref="gki-$key"
+              surl="https://gitlab.com/simonpunk/susfs4ksu/-/raw/$sref/kernel_patches/include/linux/susfs_def.h"
+              sv="$(curl -fsSL --max-time 30 "$surl" 2>/dev/null | grep -m1 "#define SUSFS_VERSION" | cut -d'"' -f2)" || true
+              [ -n "$sv" ] || sv="unknown"
+              case ",$susfs_seen," in
+                *",$sv,"*) ;;
+                *) susfs_seen="${susfs_seen:+$susfs_seen,}$sv" ;;
+              esac
+              [ -z "${{ inputs.susfs_ref }}" ] || break
+            done
+            susfs_version="${susfs_seen:-unknown}"
+            echo "  SUSFS version: $susfs_version"
+          fi
+          echo "susfs_version=$susfs_version" >> "$GITHUB_OUTPUT"
+
           if [ "${{ inputs.make_release }}" = "true" ] && [ "$nomount_version" = "unknown" ]; then
             echo "::error::Could not read NM_MODULE_VERSION from NoMount-Suite@${{ inputs.nomount_ref || 'main' }}. Cannot proceed with release."
             exit 1
@@ -382,13 +406,16 @@ jobs:
             echo "| 📦 Create release | ${{ inputs.make_release && '✅' || '❌' }} |"
             echo "| 🔄 Toolchain sync | ${{ (inputs.mirror_toolchains || inputs.make_release) && '✅' || '❌' }}${{ (!inputs.mirror_toolchains && inputs.make_release) && ' · auto for release' || '' }} |"
             echo "| 🧰 ADIOS · Debug artifacts | ${{ inputs.enable_adios && '✅' || '❌' }} · ${{ inputs.debug && '✅' || '❌' }} |"
-            echo "| 🫥 Hiding stack | ${{ inputs.enable_susfs && 'SUSFS' || 'NoMount' }}${{ (inputs.enable_susfs && inputs.susfs_ref != '') && format(' · `{0}`', inputs.susfs_ref) || '' }} |"
-            echo ""
-            echo ""
+            echo "| 🫥 Hiding stack | NoMount${{ inputs.enable_susfs && ' + SUSFS' || '' }} |"
             if [ "${{ inputs.enable_susfs }}" = "true" ]; then
-              echo "**SUSFS** — \`simonpunk/susfs4ksu\`, fix set from \`Bouteillepleine/kernel_patches@${{ inputs.patches_ref || 'main' }}\`. NoMount is off for this run."
-            else
-              echo "**NoMount (hookless)** — \`Bouteillepleine/NoMount-Suite\`, version \`${{ steps.set-matrix.outputs.nomount_version }}\`"
+              echo "| 🧷 SUSFS | \`$susfs_version\` · ref \`${{ inputs.susfs_ref != '' && inputs.susfs_ref || 'auto (per-device gki branch)' }}\` |"
+            fi
+            echo ""
+            echo ""
+            echo "**NoMount (hookless)** — \`Bouteillepleine/NoMount-Suite\`, version \`${{ steps.set-matrix.outputs.nomount_version }}\`"
+            if [ "${{ inputs.enable_susfs }}" = "true" ]; then
+              echo ""
+              echo "**SUSFS** \`$susfs_version\` — patched in on top of NoMount from \`simonpunk/susfs4ksu\`, reconciled by \`Bouteillepleine/kernel_patches@${{ inputs.patches_ref || 'main' }}\`."
             fi
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
@@ -1023,12 +1050,18 @@ jobs:
 
           cat << EOF >> release_notes.md
 
-          ## 🧷 Optional — SUSFS
+          ## 🧷 SUSFS
 
-          No longer shipped here. KernelSU Next carries the SUSFS module itself, one build per
-          KMI embedded in \`ksud\`: \`ksud susfs autoload enable\` turns it on and it is loaded on
-          every boot. It needs a \`ksud\` new enough to have that command — \`ksud susfs --help\`
-          lists \`load\` and \`autoload\` when it does.
+          Built **into** this kernel when the build asked for it, patched from
+          [simonpunk/susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) on top of NoMount. There is
+          no module to load and no \`ksud susfs autoload\` to turn on: if a ZIP's build summary
+          names a SUSFS version, that kernel has it compiled in, and if it does not, that kernel
+          has none and no module will add it.
+
+          SUSFS sits **alongside** NoMount rather than replacing it — NoMount still serves modules
+          mountlessly, and the NoMount verifier is re-run after the SUSFS patch to prove every
+          cloak family survived it. SUSFS stays inert until you configure it; the paths and mounts
+          you add are hidden from then on.
           EOF
 
           cat << EOF >> release_notes.md

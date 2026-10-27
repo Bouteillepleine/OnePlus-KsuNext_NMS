@@ -36,9 +36,17 @@ Every release contains two things. Flash the kernel first, then add NoMount Suit
 
 ## Optional: SUSFS
 
-SUSFS comes from KernelSU Next itself now, not from this repo. `ksud` embeds one SUSFS
-module per KMI, and `ksud susfs autoload enable` loads it on every boot. Check your `ksud`
-has it with `ksud susfs --help`: a recent one lists `load` and `autoload`.
+SUSFS is **compiled into the kernel** when a build asks for it, patched from
+[simonpunk/susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) at build time. The version is in
+the release notes and the build summary, not in the ZIP name. There is no module to load and no
+`ksud susfs autoload` to enable: a kernel either has SUSFS in it or it does not.
+
+It is an **addon, not a swap**. NoMount still does the mountless serving, SUSFS goes in on top of
+it, and the NoMount verifier runs again afterwards so a SUSFS hunk cannot quietly displace one of
+the cloak families. Builds without SUSFS behave exactly as before.
+
+`enable_susfs` turns it on for a run and `susfs_ref` pins the susfs4ksu ref, defaulting to the
+`gki-<android>-<kernel>` branch matching each device.
 
 ---
 

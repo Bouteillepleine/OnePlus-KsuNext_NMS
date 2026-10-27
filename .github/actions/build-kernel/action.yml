@@ -147,28 +147,22 @@ runs:
 
         echo "✅ KSU type validated: ${{ inputs.ksu_type }}"
 
-    # NoMount and SUSFS both patch fs/namei.c, fs/open.c, fs/stat.c and
-    # fs/proc/task_mmu.c, and apply_nomount_stack.sh runs at fuzz 0, so a tree
-    # carrying one cannot take the other. Rather than fail every build (every
-    # device config on this branch sets NMS), enabling SUSFS turns NoMount off
-    # for the run and says so.
+    # SUSFS is an ADDON, not a replacement: the NoMount stack goes in first and
+    # SUSFS is patched in after it, then the NoMount verifier runs again to prove
+    # the cloaks survived. Both touch fs/namei.c, fs/open.c, fs/stat.c,
+    # fs/proc/base.c and fs/proc/task_mmu.c, so susfs hunks stop fitting once
+    # NoMount has inserted lines in the same functions -- susfs_patch_surgery.py
+    # re-anchors those by the content they add. See scripts/apply_susfs_kernel.sh.
     - name: Select hiding stack
       shell: bash
       run: |
         set -euo pipefail
         if [ "${{ inputs.enable_susfs }}" = "true" ]; then
           echo "SUSFS_ENABLED=true" >> "$GITHUB_ENV"
-          echo "OP_NMS=false" >> "$GITHUB_ENV"
-          echo "Hiding stack: SUSFS"
-          if [ "${OP_NMS:-false}" = "true" ]; then
-            echo "::warning::enable_susfs overrides this device's NMS=true; NoMount is not applied to this build."
-          fi
-        elif [ "${OP_NMS:-false}" = "true" ]; then
-          echo "SUSFS_ENABLED=false" >> "$GITHUB_ENV"
-          echo "Hiding stack: NoMount"
+          echo "Hiding stack: NoMount (${OP_NMS:-false}) + SUSFS"
         else
           echo "SUSFS_ENABLED=false" >> "$GITHUB_ENV"
-          echo "Hiding stack: none"
+          echo "Hiding stack: NoMount (${OP_NMS:-false})"
         fi
 
     - name: Validate Inputs
@@ -1051,6 +1045,37 @@ runs:
     # tiann's tree), then the kernel side. Every reject is either repaired by a
     # named patch or fails the build -- a half-applied hiding stack boots and
     # lies about what it hides, which is worse than a red run.
+    - name: Apply NoMount (hookless) Patch
+      if: ${{ env.OP_NMS == 'true' }}
+      shell: bash
+      env:
+        NOMOUNT_REF: ${{ inputs.nomount_ref }}
+      run: |
+        bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" hookless
+
+    - name: Record NoMount Version
+      if: ${{ env.OP_NMS == 'true' }}
+      shell: bash
+      run: |
+        bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" record-version
+        bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" hook
+        bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" ghost
+        bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" pathhide
+
+    # Every family is applied at fuzz 0, but `patch` still exits 0 when a hunk
+    # lands at an offset -- and an offset can put a guard inside the wrong
+    # function. That is not hypothetical: ghost_notdir.patch sat in
+    # path_parentat() instead of path_lookupat() for four kernel versions with
+    # every build green. do_verify() asserts per family that each guard is
+    # inside the function it names, so a mislanded hunk fails the build here
+    # rather than shipping a cloak with a hole in it.
+    - name: Verify NoMount stack
+      if: ${{ env.OP_NMS == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" verify
+
     - name: Apply SUSFS
       if: ${{ env.SUSFS_ENABLED == 'true' }}
       shell: bash
@@ -1145,68 +1170,14 @@ runs:
         find . -name '*.orig' -delete
 
         # ---- kernel side ---------------------------------------------------
-        # Default fuzz on purpose. At --fuzz=3 the fs/proc/task_mmu.c hunks land
-        # inside enum clear_refs_types on OnePlus trees and the tree stops
-        # compiling; the rejects are carried by kernel_fix_<branch>.patch below.
+        # The shared driver does the whole job: it dry-runs the susfs kernel
+        # patch, hands every rejected hunk to susfs_patch_surgery.py to be
+        # re-anchored by the content it adds, applies the remainder, and asserts
+        # the result. It is written to run on a tree that ALREADY carries
+        # NoMount, which is why the NoMount steps come first.
+        SUSFS_KERNEL_BRANCH="$SUSFS_GKI_BRANCH" \
+          bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_susfs_kernel.sh"
         cd "$COMMON_KERNEL_FOLDER"
-        patch -p1 --forward < "$SUSFS_KP/50_add_susfs_in_${SUSFS_GKI_BRANCH}.patch" || true
-
-        krej="$(find . -name '*.rej' | sort)"
-        if [ -z "$krej" ]; then
-          echo "-- the kernel patch applied cleanly; no fix-up needed"
-        else
-          echo "-- rejected by the kernel patch:"
-          echo "$krej" | sed 's/^/     /'
-          rejected_files="$(echo "$krej" | sed -e 's|^\./||' -e 's|\.rej$||' | sort -u)"
-
-          # Pick the fix-up by DRY RUN, not by filename. One GKI branch spans
-          # several tree shapes -- 6.12.81 renamed vma_pages() to
-          # vma_data_pages() and took the fs/exec.c hunk natively, so the
-          # variant that fits 6.12.58/69 cannot fit it. A candidate qualifies
-          # only if it carries exactly the files that rejected AND applies at
-          # fuzz 0; requiring exactly one winner is what catches two variants
-          # silently claiming the same tree.
-          chosen=""
-          tried=""
-          for cand in "$FIXDIR"/kernel_fix_"${SUSFS_GKI_BRANCH}"*.patch; do
-            [ -f "$cand" ] || continue
-            tried="$tried $(basename "$cand")"
-            cand_files="$(grep '^+++ b/' "$cand" | sed 's|^+++ b/||' | sort -u)"
-            if [ "$cand_files" != "$rejected_files" ]; then
-              echo "     skip $(basename "$cand"): covers $(echo "$cand_files" | tr '\n' ' ')"
-              continue
-            fi
-            if ! patch -p1 --forward -F0 --dry-run < "$cand" >/dev/null 2>&1; then
-              echo "     skip $(basename "$cand"): does not apply at fuzz 0"
-              continue
-            fi
-            if [ -n "$chosen" ]; then
-              echo "::error::Two fix-ups both claim this tree: $(basename "$chosen") and $(basename "$cand"). Narrow one of them."
-              exit 1
-            fi
-            chosen="$cand"
-          done
-
-          if [ -z "$chosen" ]; then
-            echo "::error::The SUSFS kernel patch rejected hunks in: $(echo "$rejected_files" | tr '\n' ' ')"
-            echo "::error::and no kernel_fix_${SUSFS_GKI_BRANCH}*.patch in the $SUSVER fix set carries exactly those files at fuzz 0."
-            echo "::error::Candidates tried:${tried:- none exist for this GKI branch}"
-            echo "::error::Generate a variant for this tree shape before building it."
-            exit 1
-          fi
-
-          echo "-- $(basename "$chosen")"
-          patch -p1 --forward -F0 < "$chosen"
-          find . -name '*.rej' -delete
-        fi
-        find . -name '*.orig' -delete
-
-        # The one misplacement that compiles elsewhere but not here: a SUSFS
-        # guard landing between the braces of enum clear_refs_types.
-        if awk '/^enum clear_refs_types \{/{f=1} f&&/CONFIG_KSU_SUSFS/{bad=1} f&&/^\};/{f=0} END{exit !bad}' fs/proc/task_mmu.c; then
-          echo "::error::A SUSFS guard landed inside enum clear_refs_types in fs/proc/task_mmu.c — the kernel patch was misplaced."
-          exit 1
-        fi
         if ! grep -q 'ksu_handle_faccessat' fs/open.c; then
           echo "::error::fs/open.c has no ksu_handle_faccessat after the SUSFS kernel patch; the inline hooks did not land."
           exit 1
@@ -1261,39 +1232,18 @@ runs:
         echo "SUSFS_REQUIRED_SYMS=${susfs_required# }" >> "$GITHUB_ENV"
 
         echo "$SUSVER" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
+
+        # The whole point of patching SUSFS in AFTER NoMount: prove the cloaks
+        # are still there rather than assuming it. Every family joins through a
+        # weak extern and unconditional obj-y, so a subset links and boots while
+        # hiding less than it claims -- re-verifying is the only thing that
+        # catches a susfs hunk having displaced one of them.
+        if [ "${OP_NMS}" = true ]; then
+          bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" verify
+        fi
+
         echo "✅ SUSFS $SUSVER applied"
         echo "::endgroup::"
-
-    - name: Apply NoMount (hookless) Patch
-      if: ${{ env.OP_NMS == 'true' }}
-      shell: bash
-      env:
-        NOMOUNT_REF: ${{ inputs.nomount_ref }}
-      run: |
-        bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" hookless
-
-    - name: Record NoMount Version
-      if: ${{ env.OP_NMS == 'true' }}
-      shell: bash
-      run: |
-        bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" record-version
-        bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" hook
-        bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" ghost
-        bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" pathhide
-
-    # Every family is applied at fuzz 0, but `patch` still exits 0 when a hunk
-    # lands at an offset -- and an offset can put a guard inside the wrong
-    # function. That is not hypothetical: ghost_notdir.patch sat in
-    # path_parentat() instead of path_lookupat() for four kernel versions with
-    # every build green. do_verify() asserts per family that each guard is
-    # inside the function it names, so a mislanded hunk fails the build here
-    # rather than shipping a cloak with a hole in it.
-    - name: Verify NoMount stack
-      if: ${{ env.OP_NMS == 'true' }}
-      shell: bash
-      run: |
-        set -euo pipefail
-        bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" verify
 
     - name: Add BBG
       if: ${{ env.OP_BBG == 'true' }}
@@ -2473,15 +2423,10 @@ runs:
         # summary. NM_MODULE_VERSION is what the module release is cut against,
         # and two zips built from different engines are otherwise identical on
         # disk -- same model, same kernel, same KSU version -- so the one in
-        # Downloads cannot be told from the one already flashed. Only the NMS
-        # branch carries it; a non-NoMount build has no engine to name.
-        if [ "${{ env.OP_NMS }}" = true ]; then
-          ZIP_NAME="AK3_${ZIP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_${{ inputs.ksu_type }}_${KSUVER:-unknown}_NM${NMVER:-unknown}.zip"
-        elif [ "${{ env.SUSFS_ENABLED }}" = true ]; then
-          ZIP_NAME="AK3_${ZIP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_${{ inputs.ksu_type }}_${KSUVER:-unknown}_SUSFS${SUSVER:-unknown}.zip"
-        else
-          ZIP_NAME="AK3_${ZIP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_${{ inputs.ksu_type }}_${KSUVER:-unknown}.zip"
-        fi
+        # Downloads cannot be told from the one already flashed. The suffix is
+        # omitted when there is no engine to name; SUSFS is an addon on top and
+        # its version goes in the release notes and the build summary, not here.
+        ZIP_NAME="AK3_${ZIP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_${{ inputs.ksu_type }}_${KSUVER:-unknown}${NMVER:+_NMS_$NMVER}.zip"
         mkdir -p "$ARTIFACTS_FOLDER"
         
         echo "Creating flashable ZIP: $ZIP_NAME"
@@ -2646,15 +2591,6 @@ runs:
           echo "</details>"
         } >> "$GITHUB_STEP_SUMMARY"
 
-    - name: Upload Kernel Config
-      if: ${{ always() && !cancelled() && env.REAL_CONFIG_FILE != '' }}
-      uses: actions/upload-artifact@v7
-      with:
-        name: "${{ env.OP_MODEL }}_${{ env.OP_OS_VERSION }}_${{ env.KERNEL_FULL_VER }}_config"
-        path: ${{ env.REAL_CONFIG_FILE }}
-        archive: false
-        compression-level: 0
-        retention-days: 90
 
     - name: Upload Debug Artifacts
       if: ${{ always() && !cancelled() && inputs.debug == 'true' }}
