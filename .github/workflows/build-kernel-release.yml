@@ -1283,44 +1283,143 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          KSU_VER: ${{ needs.build.outputs.ksu_ver }}
+          KSU_REF: ${{ fromJSON(needs.set-op-model.outputs.ksu_options_normalized)[0].hash }}
+          KSU_SHA: ${{ needs.set-op-model.outputs.ksu_resolved_hash }}
         run: |
           set -euo pipefail
-          # Upstream publishes the per-build manager only as an Actions artifact: those
-          # expire, and another repo's token cannot read them. So the pair is mirrored
-          # into this repo as a `manager-<build>` release and rides along here.
-          MGR_TAG=$(gh release list --repo "${{ github.repository }}" --limit 100 \
-            --json tagName --jq '[.[].tagName | select(startswith("manager-"))] | .[0] // empty')
-          if [ -z "$MGR_TAG" ]; then
-            echo "::warning::No manager-* release in this repo - shipping without the manager APKs."
+          # Both managers ride along with every release, built from the same KSU ref the
+          # kernels were. Upstream publishes the per-build pair only as Actions artifacts
+          # and a GITHUB_TOKEN cannot read another repo's artifacts, so nightly.link
+          # (which proxies public artifacts unauthenticated) is the only route to them.
+          # Nothing is trusted on that basis: every APK must carry the signing
+          # certificate of the official release asset, fetched straight from github.com,
+          # which is the certificate the kernel itself checks in manager/apk_sign.c. A
+          # tampered APK cannot be attached, and could not act as the manager anyway.
+          rm -rf managers mgr-work
+          mkdir -p managers mgr-work/apk
+
+          # The manager and the driver must be the same build. A newer kernel with an
+          # older manager is the "Manager uapi version (N) and driver uapi version (M)
+          # mismatch" this release's own notes warn about, so ship nothing rather than a
+          # wrong pair. needs.build.outputs.ksu_ver is always empty (the job maps
+          # steps.build-stat.outputs.ksu_version while the step writes ksu_ver), and an
+          # empty value used to skip the check entirely and let a manager 9 builds behind
+          # the driver ship - measured on a full release. Read the number from the AK3
+          # zips this release actually carries instead. The build is NOT the last
+          # underscore-separated field: _NMS_<version> follows it, so a trailing-field
+          # match silently returns the whole filename and every comparison below then
+          # fails. Match with -n/p so an unparsed name yields nothing and is caught here.
+          mapfile -t driver_builds < <(find ./downloaded-artifacts -maxdepth 1 \
+            -name 'AK3_*.zip' -type f -printf '%f\n' \
+            | sed -nE 's/^AK3_.*_([0-9]+)(_NMS_[0-9][0-9.]*)?\.zip$/\1/p' | sort -u)
+          if [ "${#driver_builds[@]}" -ne 1 ]; then
+            echo "::warning::could not determine which driver build this release carries (parsed: ${driver_builds[*]:-none}) - not attaching any manager APK."
             exit 0
           fi
-          # The manager and the driver must be the same build. A newer kernel with an older
-          # manager is the "Manager uapi version (N) and driver uapi version (M) mismatch"
-          # this release's own notes warn about, so ship nothing rather than a wrong pair.
-          MGR_BUILD="${MGR_TAG#manager-}"
-          # KSU_VER comes from needs.build.outputs.ksu_ver, which is always empty: the job
-          # maps steps.build-stat.outputs.ksu_version while the step writes ksu_ver. The
-          # old guard was `[ -n "$KSU_VER" ] && ...`, so an empty value skipped the check
-          # entirely and a manager 9 builds behind the driver shipped anyway - measured on
-          # a full release. Read the number from the AK3 zips this release actually carries,
-          # and refuse to attach anything when even that cannot be determined.
-          DRIVER_VER="${KSU_VER:-}"
-          if [ -z "$DRIVER_VER" ]; then
-            DRIVER_VER=$(ls ./downloaded-artifacts/AK3_*.zip 2>/dev/null | head -1 \
-              | sed -E 's/.*_([0-9]+)\.zip$/\1/')
+          DRIVER_VER="${driver_builds[0]}"
+          echo "driver build $DRIVER_VER, KSU ${KSU_REF:-?} = ${KSU_SHA:0:8}"
+
+          REF_SIGNER=""
+          if REF_URL=$(curl -fsSL --retry 3 --retry-delay 5 --retry-connrefused \
+                "https://api.github.com/repos/KernelSU-Next/KernelSU-Next/releases/latest" \
+                | jq -r '[.assets[].browser_download_url | select(endswith("-release.apk"))
+                          | select(contains("-spoofed_") | not)] | .[0] // empty') \
+             && [ -n "$REF_URL" ] \
+             && curl -fsSL --retry 3 --retry-delay 5 --retry-connrefused \
+                  -o mgr-work/reference.apk "$REF_URL"; then
+            REF_SIGNER=$(python3 .github/scripts/apk_signer_digest.py mgr-work/reference.apk | cut -d' ' -f1)
+            echo "reference signer from $(basename "$REF_URL"): $REF_SIGNER"
           fi
-          if [ -z "$DRIVER_VER" ]; then
-            echo "::warning::could not determine which driver build this release carries - not attaching any manager APK."
+          if [ -z "$REF_SIGNER" ]; then
+            echo "::warning::could not read the signing certificate of the official manager - not attaching any manager APK."
             exit 0
           fi
-          if [ "$MGR_BUILD" != "$DRIVER_VER" ]; then
-            echo "::warning::$MGR_TAG does not match the driver this release carries ($DRIVER_VER) - not attaching it. Cut a manager-$DRIVER_VER release."
+
+          validate_pair() {
+            local dir="$1" plain=0 spoofed=0 apk base build sha
+            for apk in "$dir"/*.apk; do
+              [ -f "$apk" ] || continue
+              base=$(basename "$apk")
+              build=$(printf '%s' "$base" | sed -nE 's/.*_([0-9]+)-release\.apk$/\1/p')
+              if [ "$build" != "$DRIVER_VER" ]; then
+                echo "  x $base is build ${build:-?}, driver is $DRIVER_VER"
+                return 1
+              fi
+              # git describe puts the commit in the version name, so the pair can be tied
+              # to the commit the kernels were built from and not just to a number.
+              sha=$(printf '%s' "$base" | sed -nE 's/.*-g([0-9a-f]+)[-_].*/\1/p')
+              if [ -n "$sha" ] && [ -n "$KSU_SHA" ] && [ "${KSU_SHA#"$sha"}" = "$KSU_SHA" ]; then
+                echo "  x $base was built from $sha, the kernels from ${KSU_SHA:0:8}"
+                return 1
+              fi
+              if ! python3 .github/scripts/apk_signer_digest.py "$apk" "$REF_SIGNER"; then
+                echo "  x $base is not signed by the official manager certificate"
+                return 1
+              fi
+              case "$base" in
+                *-spoofed_*) spoofed=$((spoofed + 1)) ;;
+                *) plain=$((plain + 1)) ;;
+              esac
+              echo "  ok $base"
+            done
+            [ "$plain" -ge 1 ] && [ "$spoofed" -ge 1 ]
+          }
+
+          fresh_workdir() {
+            rm -rf mgr-work/apk
+            mkdir -p mgr-work/apk
+          }
+
+          from_nightly_link() {
+            local a
+            [ -n "${KSU_REF:-}" ] || return 1
+            for a in manager manager-spoofed; do
+              curl -fsSL --retry 3 --retry-delay 5 --retry-connrefused -o "mgr-work/$a.zip" \
+                "https://nightly.link/KernelSU-Next/KernelSU-Next/workflows/build-manager-ci/$KSU_REF/$a.zip" \
+                || return 1
+              unzip -oqq "mgr-work/$a.zip" -d mgr-work/apk || return 1
+            done
+          }
+
+          from_upstream_release() {
+            local url
+            [ -n "${KSU_REF:-}" ] || return 1
+            curl -fsSL --retry 3 --retry-delay 5 --retry-connrefused \
+              "https://api.github.com/repos/KernelSU-Next/KernelSU-Next/releases/tags/$KSU_REF" \
+              > mgr-work/release.json 2>/dev/null || return 1
+            for url in $(jq -r '[.assets[].browser_download_url
+                                 | select(endswith("-release.apk"))] | .[]' mgr-work/release.json); do
+              curl -fsSL --retry 3 --retry-delay 5 --retry-connrefused \
+                -o "mgr-work/apk/$(basename "$url")" "$url" || return 1
+            done
+          }
+
+          from_mirror() {
+            gh release download "manager-$DRIVER_VER" --repo "${{ github.repository }}" \
+              --pattern '*.apk' --dir mgr-work/apk 2>/dev/null
+          }
+
+          ok=false
+          for source in from_nightly_link from_upstream_release from_mirror; do
+            echo "::group::$source"
+            fresh_workdir
+            if "$source"; then
+              if validate_pair mgr-work/apk; then
+                ok=true
+                echo "::endgroup::"
+                break
+              fi
+            else
+              echo "  nothing to take from this source"
+            fi
+            echo "::endgroup::"
+          done
+
+          if [ "$ok" != true ]; then
+            echo "::warning::no manager pair matching driver build $DRIVER_VER - shipping without the manager APKs. Cut a manager-$DRIVER_VER release, or rerun once upstream's build-manager-ci has caught up with ${KSU_REF:-the pinned ref}."
             exit 0
           fi
-          mkdir -p managers
-          gh release download "$MGR_TAG" --repo "${{ github.repository }}" \
-            --pattern '*.apk' --dir managers
+          mv mgr-work/apk/*.apk managers/
           ls -la managers
 
       - name: 🚀 Create GitHub Release

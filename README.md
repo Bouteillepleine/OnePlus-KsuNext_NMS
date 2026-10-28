@@ -102,11 +102,18 @@ configs/
 
 **Prerequisites:** unlocked bootloader · a backed-up stock `boot.img` · **[Kernel Flasher](https://github.com/fatalcoder524/KernelFlasher/releases)** installed.
 
-1. **Download** the [latest release](https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/releases/latest) and grab **both**:
-   - the **kernel** ZIP matching your exact device / OS / kernel base, and
-   - the **`00_NoMount-Module-vX.Y.Z.zip`** add-on (top of the Assets list).
+1. **Download** the [latest release](https://github.com/Bouteillepleine/OnePlus-KsuNext_NMS/releases/latest) and grab **all three**:
+   - the **kernel** ZIP matching your exact device / OS / kernel base,
+   - the **`00_NoMount-Module-vX.Y.Z.zip`** add-on (top of the Assets list), and
+   - one **`KernelSU_Next_…-release.apk`** manager.
 2. **Flash the kernel** ZIP with **Kernel Flasher** (or **KernelSU Next Manager**).
-3. **Install the KernelSU Next Manager APK.** Use the version shown as `KernelSU Next Version` in the release notes.
+3. **Install the manager APK** from this release's Assets. Two are attached and you install **one**:
+   the plain package, or the `-spoofed_` build, which is the same app under a randomised package
+   name so a scan of installed packages finds no known root manager. Both are the build the
+   kernels here were compiled against, which is why they are attached at all: a manager and a
+   driver from different builds stop talking to each other.
+   > The spoofed package name is randomised per build, so hiding rules that name the manager
+   > package need updating after each one.
 4. **Add NoMount Suite:** KernelSU Next Manager → **Modules → Install from storage** → select `00_NoMount-Module-…zip`.
    > Already have a metamodule? Remove it and reboot **first**: only one metamodule can be active at a time.
 5. **Reboot.**
