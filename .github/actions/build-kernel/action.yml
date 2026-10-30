@@ -825,6 +825,14 @@ runs:
           on)  want=true ;;
           *)   want="${OP_STOCK_CONFIG:-false}" ;;
         esac
+        # Droidspaces turns on SYSVIPC, DEVTMPFS, PID_NS and POSIX_MQUEUE, every one of
+        # which stock leaves unset. A ds build that reports its real config hands any
+        # app a four-symbol diff against the device it claims to be, so the two travel
+        # together: ds on means the spoof is on, whatever the input asked for.
+        if [ "${OP_DS:-false}" = "true" ] && [ "$want" != "true" ]; then
+          echo "::notice title=config.gz spoof::forced on because Droidspaces is enabled for $OP_MODEL"
+          want=true
+        fi
         echo "STOCK_CONFIG_WANT=$want" >> "$GITHUB_ENV"
         if [ "$want" != "true" ]; then
           echo "config.gz spoof off for $OP_MODEL — not snapshotting"
