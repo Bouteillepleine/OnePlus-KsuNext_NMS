@@ -873,9 +873,23 @@ runs:
         echo "STOCK_SNAPSHOT=$SNAP" >> "$GITHUB_ENV"
         # A copy for auditing, uploaded with the debug artifacts when debug is on.
         cp "$SNAP" "$DEBUG_ARTIFACTS_FOLDER/stock_config_${OP_MODEL}.config" 2>/dev/null || true
+        # And one on its own, so a spoof_config_gz=on sweep can collect every model's
+        # stock config without turning on debug and dragging vmlinux along with it.
+        mkdir -p "$GITHUB_WORKSPACE/stock_config_snapshot"
+        cp "$SNAP" "$GITHUB_WORKSPACE/stock_config_snapshot/stock_config_${OP_MODEL}.config"
         echo "✅ snapshot: $(wc -l < "$SNAP") lines, sha256 $(sha256sum "$SNAP" | cut -c1-16)"
         echo "   $(sed -n 3p "$SNAP")"
         echo "::endgroup::"
+
+    - name: Upload the stock config snapshot
+      if: ${{ env.STOCK_SNAPSHOT != '' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: stock-config-${{ env.OP_MODEL }}
+        path: ${{ github.workspace }}/stock_config_snapshot/stock_config_${{ env.OP_MODEL }}.config
+        if-no-files-found: ignore
+        retention-days: 7
+        compression-level: 9
 
     - name: Clean Up ABI Protected Exports
       shell: bash
