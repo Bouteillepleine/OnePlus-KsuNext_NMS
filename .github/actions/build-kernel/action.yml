@@ -1795,22 +1795,55 @@ runs:
         # naming a different clang contradicts the banner with nothing but a local
         # read. Align that one key; LOCALVERSION stays stock, which is consistent
         # because uname -r is already spoofed to the stock string.
+        # CC_VERSION_TEXT alone is not enough: CLANG_VERSION, LLD_VERSION and
+        # AS_VERSION encode the same toolchain as major*10000+minor*100+patch, so a
+        # capture realigned on one key reads 'clang version 20.0.0' beside
+        # CONFIG_CLANG_VERSION=190001 and contradicts itself without any outside
+        # reference. Align the whole family, and only keys the config already has.
         if grep -q '^CONFIG_CC_VERSION_TEXT=' "$STOCK"; then
           cc_text="$(clang --version 2>/dev/null | head -n 1 || true)"
+          lld_text="$(ld.lld --version 2>/dev/null | head -n 1 || true)"
+          rustc_text="$(rustc --version 2>/dev/null | head -n 1 || true)"
           if [ -n "$cc_text" ]; then
-            CC_TEXT="$cc_text" python3 - "$STOCK" <<'PY' || echo "::warning title=config.gz spoof::could not align CONFIG_CC_VERSION_TEXT"
-        import os, sys
-        path, cc = sys.argv[1], os.environ["CC_TEXT"]
-        with open(path) as f:
-            lines = f.readlines()
-        with open(path, "w") as f:
-            for line in lines:
-                if line.startswith("CONFIG_CC_VERSION_TEXT="):
-                    line = 'CONFIG_CC_VERSION_TEXT="%s"\n' % cc
-                f.write(line)
+            CC_TEXT="$cc_text" LLD_TEXT="$lld_text" RUSTC_TEXT="$rustc_text" \
+            python3 - "$STOCK" <<'PY' || echo "::warning title=config.gz spoof::could not align the toolchain keys"
+        import os, re, sys
+
+        path = sys.argv[1]
+        cc = os.environ["CC_TEXT"]
+        lld = os.environ.get("LLD_TEXT", "")
+        rustc = os.environ.get("RUSTC_TEXT", "")
+
+        def code(text):
+            m = re.search(r"(\d+)\.(\d+)\.(\d+)", text or "")
+            if not m:
+                return None
+            major, minor, patch = (int(x) for x in m.groups())
+            return major * 10000 + minor * 100 + patch
+
+        subs = {"CONFIG_CC_VERSION_TEXT": '"%s"' % cc}
+        cc_code = code(cc)
+        if cc_code is not None:
+            subs["CONFIG_CLANG_VERSION"] = str(cc_code)
+            subs["CONFIG_AS_VERSION"] = str(cc_code)
+        lld_code = code(lld)
+        if lld_code is not None:
+            subs["CONFIG_LLD_VERSION"] = str(lld_code)
+        if rustc:
+            subs["CONFIG_RUSTC_VERSION_TEXT"] = '"%s"' % rustc
+
+        out, hit = [], []
+        for line in open(path):
+            key = line.split("=", 1)[0]
+            if key in subs:
+                line = "%s=%s\n" % (key, subs[key])
+                hit.append(key)
+            out.append(line)
+        open(path, "w").writelines(out)
+        print("   toolchain aligned: %s" % ", ".join(sorted(hit)))
         PY
           else
-            echo "::warning title=config.gz spoof::clang not resolvable here; CONFIG_CC_VERSION_TEXT left at its stock value"
+            echo "::warning title=config.gz spoof::clang not resolvable here; the toolchain keys stay at their stock values"
           fi
         fi
 
