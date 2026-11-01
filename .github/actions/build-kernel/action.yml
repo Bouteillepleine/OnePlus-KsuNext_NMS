@@ -1219,6 +1219,13 @@ runs:
           [KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG]=y
           [KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS]=y
           [KSU_SUSFS_ENABLE_LOG]=y
+          # Added by susfs on 2026-11-01, upstream default y. Hides user-defined
+          # uids from getpriority/setpriority/ioprio_get/ioprio_set for uid >=
+          # 10000 -- the same oracle NoMount already closes with uidconceal and
+          # the fgetpriority LKM. A second filter on those four syscalls is
+          # duplicate coverage, and two independent hooks on one statement is the
+          # collision class that costs the most to debug, so NoMount keeps it.
+          [KSU_SUSFS_PRIORITY_UID_FILTER]=n
         )
         defined="$(grep -oE '^config KSU_SUSFS[A-Z_]*' "$KSU_FOLDER/kernel/Kconfig" | awk '{print $2}' | sort -u)"
         listed="$(printf '%s\n' "${!SUSFS_POLICY[@]}" | sort)"
