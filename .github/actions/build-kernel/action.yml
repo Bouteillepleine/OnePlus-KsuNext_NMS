@@ -1182,6 +1182,14 @@ runs:
         fi
         find . -name '*.orig' -delete
 
+        # susfs's enable patch is the last writer of kernel/selinux/rules.c: it
+        # reverts KernelSU's generation tracking (reset_avc_cache(u32 seqno) ->
+        # reset_avc_cache(), both pol->latest_granting bumps dropped) and so puts
+        # the policyload=0 tell back after the _hook step has run. _hook therefore
+        # defers fix_selinux_seqno to here, and assert-config refuses to end a
+        # build where this line never ran.
+        bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" seqno
+
         # ---- kernel side ---------------------------------------------------
         # The shared driver does the whole job: it dry-runs the susfs kernel
         # patch, hands every rejected hunk to susfs_patch_surgery.py to be
