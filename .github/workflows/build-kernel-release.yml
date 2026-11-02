@@ -321,9 +321,16 @@ jobs:
               branch="gki-$key"
               ref="$SUSFS_REF"; [ "$ref" = auto ] && ref="$branch"
               ver=""
+              # The || true below is what makes these attempts happen. This step
+              # runs under `set -euo pipefail`, so without it a curl -f that gets
+              # an HTTP error returns 22, pipefail hands 22 to the assignment, and
+              # errexit kills the whole matrix job on attempt 1 -- the retries and
+              # the ${ver:-unknown} fallback never run. One throttled GitLab reply
+              # took down a 90-leg dispatch that way (run 41499457662). The version
+              # string only feeds susfs_plan in the summary, so unknown beats dead.
               for attempt in 1 2 3; do
                 ver="$(curl -fsSL --max-time 30 "https://gitlab.com/simonpunk/susfs4ksu/-/raw/$ref/kernel_patches/include/linux/susfs.h" 2>/dev/null \
-                  | sed -n 's/^#define[[:space:]]\+SUSFS_VERSION[[:space:]]\+"\([^"]*\)".*/\1/p' | head -n1)"
+                  | sed -n 's/^#define[[:space:]]\+SUSFS_VERSION[[:space:]]\+"\([^"]*\)".*/\1/p' | head -n1 || true)"
                 [ -n "$ver" ] && break
                 sleep 5
               done
