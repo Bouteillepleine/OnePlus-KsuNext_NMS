@@ -70,7 +70,7 @@ on:
         type: boolean
         default: false
       susfs_ref:
-        description: 'simonpunk/susfs4ksu ref to patch SUSFS into every kernel. auto = the gki branch matching each device, a branch/tag/40-char SHA pins it (a release you want to reproduce should pass a SHA), empty = build without SUSFS.'
+        description: 'simonpunk/susfs4ksu ref to patch SUSFS into every kernel. auto = the gki branch matching each device, a branch/tag/40-char SHA pins it (a release you want to reproduce should pass a SHA), off (also none or -1) = build without SUSFS.'
         required: false
         type: string
         default: auto
@@ -315,6 +315,11 @@ jobs:
           susfs_plan="off"
           susfs_version=""
           SUSFS_REF='${{ inputs.susfs_ref }}'
+          # An empty susfs_ref means no SUSFS, but a workflow_dispatch string
+          # input that arrives empty is replaced by its declared default, so
+          # that branch was unreachable from the UI and the API alike. Take an
+          # explicit sentinel instead; -1 is what the standalone builder uses.
+          case "$SUSFS_REF" in off|none|-1) SUSFS_REF="" ;; esac
           if [ -n "$SUSFS_REF" ]; then
             susfs_plan=""
             for key in $(echo "$merged_matrix" | jq -r '.[] | "\(.android_version)-\(.kernel_version)"' | sort -u); do
@@ -411,11 +416,11 @@ jobs:
             echo "| 📦 Create release | ${{ inputs.make_release && '✅' || '❌' }} |"
             echo "| 🔄 Toolchain sync | ${{ (inputs.mirror_toolchains || inputs.make_release) && '✅' || '❌' }}${{ (!inputs.mirror_toolchains && inputs.make_release) && ' · auto for release' || '' }} |"
             echo "| 🧰 ADIOS · Debug artifacts | ${{ inputs.enable_adios && '✅' || '❌' }} · ${{ inputs.debug && '✅' || '❌' }} |"
-            echo "| 🫥 Hiding stack | NoMount${{ inputs.susfs_ref != '' && ' + SUSFS' || '' }} |"
+            echo "| 🫥 Hiding stack | NoMount${{ steps.set-matrix.outputs.susfs_plan != 'off' && ' + SUSFS' || '' }} |"
             echo ""
             echo ""
             echo "**NoMount (hookless)** — \`Bouteillepleine/NoMount-Suite\`, version \`${{ steps.set-matrix.outputs.nomount_version }}\`"
-            if [ -n "${{ inputs.susfs_ref }}" ]; then
+            if [ "${{ steps.set-matrix.outputs.susfs_plan }}" != off ]; then
               echo ""
               echo "**SUSFS** — \`simonpunk/susfs4ksu\` · "'${{ steps.set-matrix.outputs.susfs_plan }}'
             fi
