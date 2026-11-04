@@ -908,6 +908,27 @@ runs:
       shell: bash
       run: bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/fix_oplus_duplicate_exports.sh"
 
+    - name: Drop the unbuildable wl2868c regulator
+      shell: bash
+      run: |
+        echo "::group::Drop the unbuildable wl2868c regulator"
+        set -euo pipefail
+        case "$OP_BRANCH" in
+          wild/mt6835)
+            mk="$COMMON_KERNEL_FOLDER/drivers/regulator/Makefile"
+            if [ -f "$mk" ] && grep -q 'wl2868c-regulator\.o' "$mk"; then
+              sed -i '/wl2868c-regulator\.o/d' "$mk"
+              echo "   dropped wl2868c-regulator.o: it calls get_PCB_Version, which this tree exports nowhere"
+            else
+              echo "   nothing to drop"
+            fi
+            ;;
+          *)
+            echo "   not mt6835, nothing to do"
+            ;;
+        esac
+        echo "::endgroup::"
+
     - name: Add KernelSU Next
       shell: bash
       if: ${{ inputs.ksu_type == 'KSUN' }}
