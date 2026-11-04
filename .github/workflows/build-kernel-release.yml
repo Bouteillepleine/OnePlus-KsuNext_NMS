@@ -754,9 +754,39 @@ jobs:
       - name: Summarize build results
         run: |
           set -uo pipefail
-          jobs="$(gh api --paginate \
-            "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100" \
-            --jq '.jobs[] | select(.name|startswith("build (")) | "\(.conclusion)\t\(.name)"')"
+
+          # One 502 from the jobs API used to fail this job and redden a run whose
+          # kernels and release were all fine: the step runs under `bash -e`, so the
+          # failed command substitution exited before anything was written, and
+          # --paginate means any single page can do it. This job only writes a
+          # summary and gates nothing, so retry, then degrade to a note rather than
+          # reporting a build failure that did not happen.
+          jobs=""
+          got=""
+          for attempt in 1 2 3 4 5; do
+            if jobs="$(gh api --paginate \
+                "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100" \
+                --jq '.jobs[] | select(.name|startswith("build (")) | "\(.conclusion)\t\(.name)"')"; then
+              got=1
+              break
+            fi
+            echo "::warning::jobs API attempt ${attempt} failed"
+            jobs=""
+            if [ "$attempt" -lt 5 ]; then
+              sleep $((attempt * 5))
+            fi
+          done
+
+          if [ -z "$got" ]; then
+            echo "::warning::the jobs API did not answer after 5 attempts; skipping the build report"
+            {
+              echo "## 📋 Build Report"
+              echo ""
+              echo "_The jobs API did not answer, so this report could not be generated._"
+              echo "_Per-device results are on the run's own job list; this step gates nothing._"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
 
           total=$(printf '%s\n' "$jobs" | grep -c . || true)
           ok=$(printf '%s\n'    "$jobs" | grep -c   '^success' || true)
