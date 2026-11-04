@@ -2193,6 +2193,25 @@ runs:
             ;;
         esac
         
+        AFDO_ON=false
+        AFDO_PROFILE=""
+        AFDO_ARGS=()
+        case "$OP_BRANCH" in
+          wild/sm8750|wild/sm8850|wild/sm8845)
+            for p in "$COMMON_KERNEL_FOLDER/gki/aarch64/afdo/kernel.afdo" "$COMMON_KERNEL_FOLDER/android/gki/aarch64/afdo/kernel.afdo"; do
+              if [ -f "$p" ]; then AFDO_PROFILE="$p"; break; fi
+            done
+            if [ -n "$AFDO_PROFILE" ]; then
+              scripts/config --file "$OUT/.config" -e AUTOFDO_CLANG
+              AFDO_ARGS=(CLANG_AUTOFDO_PROFILE="$AFDO_PROFILE")
+              AFDO_ON=true
+              echo "✅ AFDO profile: $AFDO_PROFILE"
+            else
+              echo "::warning::No AFDO profile in tree for $OP_BRANCH; building without AutoFDO"
+            fi
+            ;;
+        esac
+
         scripts/config --file "$OUT/.config" -e LTO_CLANG -d LTO_CLANG_NONE -d LTO_CLANG_THIN -d LTO_CLANG_FULL
         
         case "${{ env.OP_LTO}}" in
@@ -2233,6 +2252,9 @@ runs:
         make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" O="$OUT" olddefconfig
 
         REQUIRED_SYMS="CONFIG_KSU"
+        if [ "$AFDO_ON" = true ]; then
+          REQUIRED_SYMS="$REQUIRED_SYMS CONFIG_AUTOFDO_CLANG"
+        fi
         # KSU_SUSFS depends on THREAD_INFO_IN_TASK, so olddefconfig silently drops
         # the whole SUSFS set on a tree that lacks it and the kernel builds without
         # any of the hiding it was asked for. The list comes from the Apply SUSFS
@@ -2244,6 +2266,10 @@ runs:
           grep -q "^${sym}=y" "$OUT/.config" \
             || { echo "::error::${sym} was dropped by olddefconfig (not defined by the KSU source?)"; exit 1; }
         done
+
+        if [ "$AFDO_ON" = true ]; then
+          echo "✅ AutoFDO enabled (CONFIG_AUTOFDO_CLANG=y)"
+        fi
 
         if [ "$OP_NMS" = true ]; then
           bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" assert-config
@@ -2261,6 +2287,7 @@ runs:
         echo "Optimization: ${{ inputs.optimize_level }}"
         echo "KCFLAGS: ${KCFLAGS:0:150}..."
         echo "KCPPFLAGS: ${KCPPFLAGS:0:150}..."
+        if [ "$AFDO_ON" = true ]; then echo "AutoFDO: $AFDO_PROFILE"; else echo "AutoFDO: off"; fi
         echo "Timestamp: $KBUILD_BUILD_TIMESTAMP"
         echo "Workspace: $WORKSPACE"
         
@@ -2282,8 +2309,8 @@ runs:
         set -o pipefail
         
         if [ "${{ inputs.debug }}" == "true" ]; then
-          make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" -j"$(nproc --all)" O="$OUT" KCFLAGS="$KCFLAGS" KCPPFLAGS="$KCPPFLAGS" Image modules 2>&1 | tee build.log
-          make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" -j"$(nproc --all)" O="$COMMON_KERNEL_FOLDER/out" KCFLAGS="$KCFLAGS" KCPPFLAGS="$KCPPFLAGS" INSTALL_MOD_PATH="$COMMON_KERNEL_FOLDER/out/install" modules_install 2>&1 | tee install.log
+          make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" -j"$(nproc --all)" O="$OUT" KCFLAGS="$KCFLAGS" KCPPFLAGS="$KCPPFLAGS" "${AFDO_ARGS[@]}" Image modules 2>&1 | tee build.log
+          make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" -j"$(nproc --all)" O="$COMMON_KERNEL_FOLDER/out" KCFLAGS="$KCFLAGS" KCPPFLAGS="$KCPPFLAGS" INSTALL_MOD_PATH="$COMMON_KERNEL_FOLDER/out/install" "${AFDO_ARGS[@]}" modules_install 2>&1 | tee install.log
           
           cp build.log "$DEBUG_ARTIFACTS_FOLDER/build.log"
           cp install.log "$DEBUG_ARTIFACTS_FOLDER/install.log"
@@ -2294,7 +2321,7 @@ runs:
           
           ls -la "$DEBUG_ARTIFACTS_FOLDER"
         else
-          make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" -j"$(nproc --all)" O="$OUT" KCFLAGS="$KCFLAGS" KCPPFLAGS="$KCPPFLAGS" Image 2>&1 | tee build.log
+          make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" -j"$(nproc --all)" O="$OUT" KCFLAGS="$KCFLAGS" KCPPFLAGS="$KCPPFLAGS" "${AFDO_ARGS[@]}" Image 2>&1 | tee build.log
         fi
         
         REAL_CONFIG="$OUT/.config"
