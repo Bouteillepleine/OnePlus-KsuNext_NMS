@@ -88,16 +88,17 @@ redirection inside the kernel:
 - **BBRv3 and ECN** for TCP.
 - **WireGuard**, built into the kernel.
 - **IP sets and IPv6 NAT**, and the netfilter **TTL target**.
-- **BBG LSM**, on most targets.
 - **sched_ext**, the extensible scheduler framework, on kernels that carry it — HMBIRD
   on the targets that support it.
 - A **Unicode** fix patch.
 
-### Off by default, opt in per device or per build
+### Opt-in and per-device toggles
 
-Flipped in `configs/`, or at dispatch time for the ones marked as inputs:
+Set in `configs/`, or at dispatch time for the ones marked as inputs. Off by default
+unless noted:
 
 - **ADIOS** I/O scheduler — `enable_adios` input.
+- **BBG LSM** — `bbg`. On for 5.10 through 6.6; off on every 6.12 target.
 - **NTSync**, Win32-style sync primitives — `ntsync`.
 - **Droidspaces**, enables SYSVIPC without breaking the KMI — `ds`.
 - Extra **optimisation patches** — `opt`.
