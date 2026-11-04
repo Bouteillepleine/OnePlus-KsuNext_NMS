@@ -3,10 +3,11 @@
   <remote fetch="https://git.codelinaro.org/clo/la" name="clo-la"/>
   <remote fetch="https://github.com/OnePlusOSS" name="origin"/>
   <remote fetch="https://github.com/Bouteillepleine" name="Bouteillepleine"/>
+  <remote fetch="https://android.googlesource.com" name="aosp"/>
   <default remote="clo-la" revision="dummy_revision" sync-c="true" sync-tags="false"/>
   <project remote="Bouteillepleine" name="AnyKernel3" path="AnyKernel3" revision="suite"/>
 
-  <project remote="origin" name="android_kernel_common_oneplus_sm8850" path="kernel_platform/common" revision="oneplus/sm8850_b_16.0_pad_4" clone-depth="1">
+  <project remote="aosp" name="kernel/common" path="kernel_platform/common" revision="925a103d123c30a84577f29e1573376aacbde94b" clone-depth="1">
     <linkfile dest="kernel_platform/.source_date_epoch_dir" src="."/>
   </project>
 
