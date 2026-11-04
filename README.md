@@ -81,8 +81,13 @@ redirection inside the kernel:
 ## What else is in the kernel
 
 - **KernelSU Next**, kernel-level root.
+- **AutoFDO**, profile-guided codegen on the 6.6 and 6.12 Snapdragon targets, using the
+  AOSP profile matched to each kernel sublevel.
+- **MLGO register allocation**, ML-guided allocation on the 6.12 Snapdragon targets whose
+  toolchain ships the model.
+- **BBRv3 and ECN** for TCP.
 - **WireGuard**, built into the kernel.
-- **BBR and ECN** for TCP.
+- **ADIOS** I/O scheduler, optional per build.
 - **sched_ext**, the extensible scheduler framework, on kernels that carry it.
 
 ---
