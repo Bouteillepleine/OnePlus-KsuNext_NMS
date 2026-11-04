@@ -2214,6 +2214,23 @@ runs:
             ;;
         esac
         
+        case "${{ env.OP_LTO}}" in
+          none)
+            MLGO_PROBE="${RUNNER_TEMP:-/tmp}/mlgo_probe.c"
+            printf '%s' 'long f(long*a){long s=0,b=1,c=2,d=3,e=4,g=5,h=6,i=7,j=8,k=9,l=10,m=11,n=12,o=13,p=14,q=15;for(int x=0;x<16;x++){s+=a[x]^b;b*=a[x]+c;c^=a[x]|d;d+=a[x]&e;e*=a[x]^g;g+=a[x]+h;h^=a[x]*i;i+=a[x]^j;j*=a[x]+k;k^=a[x]|l;l+=a[x]&m;m*=a[x]^n;n+=a[x]+o;o^=a[x]*p;p+=a[x]^q;q*=a[x]+s;}return s^b^c^d^e^g^h^i^j^k^l^m^n^o^p^q;}' > "$MLGO_PROBE"
+            if clang -O2 -mllvm -regalloc-enable-advisor=release --target=aarch64-linux-gnu -c "$MLGO_PROBE" -o /dev/null >/dev/null 2>&1; then
+              KCFLAGS_EXTRA="-mllvm -regalloc-enable-advisor=release ${KCFLAGS_EXTRA}"
+              echo "🧠 MLGO regalloc advisor enabled"
+            else
+              echo "::warning::$CLANG_VERSION has no AOT regalloc-eviction model; building without the MLGO advisor"
+            fi
+            rm -f "$MLGO_PROBE"
+            ;;
+          *)
+            echo "::warning::MLGO regalloc advisor skipped on LTO=${{ env.OP_LTO}}: regalloc runs at link time, so KCFLAGS would be a no-op"
+            ;;
+        esac
+
         AFDO_ON=false
         AFDO_PROFILE=""
         AFDO_ARGS=()
