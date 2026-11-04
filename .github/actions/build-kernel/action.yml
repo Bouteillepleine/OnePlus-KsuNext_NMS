@@ -2222,12 +2222,12 @@ runs:
               KCFLAGS_EXTRA="-mllvm -regalloc-enable-advisor=release ${KCFLAGS_EXTRA}"
               echo "🧠 MLGO regalloc advisor enabled"
             else
-              echo "::warning::$CLANG_VERSION has no AOT regalloc-eviction model; building without the MLGO advisor"
+              echo "   MLGO regalloc advisor unavailable: this clang has no AOT regalloc-eviction model"
             fi
             rm -f "$MLGO_PROBE"
             ;;
           *)
-            echo "::warning::MLGO regalloc advisor skipped on LTO=${{ env.OP_LTO}}: regalloc runs at link time, so KCFLAGS would be a no-op"
+            echo "   MLGO regalloc advisor not applicable on LTO=${{ env.OP_LTO}}: regalloc runs at link time"
             ;;
         esac
 
