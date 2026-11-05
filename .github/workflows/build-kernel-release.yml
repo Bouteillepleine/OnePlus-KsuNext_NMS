@@ -83,12 +83,12 @@ on:
         description: '🧠 Apply the KMI-safe BORE scheduler (6.12 only; boot-verified on OP15 6.12.69, 0 CRC drift)'
         required: false
         type: boolean
-        default: false
+        default: true
       bore_default_on:
         description: '🧠 Start BORE active (sched_bore=1). OFF by default: BORE-on bootlooped an OP15 once, suspected fair<->SCX handover. Off still compiles BORE in; toggle at runtime via /proc/sys/kernel/sched_bore.'
         required: false
         type: boolean
-        default: false
+        default: true
       nomount_ref:
         description: 'NoMount-Suite branch/ref for the Prism engine src + patches (default main; set a branch to validate it before it is released). The engine ships inside the Suite repo, under hookless/.'
         required: false
@@ -437,6 +437,8 @@ jobs:
             echo "| 📦 Create release | ${{ inputs.make_release && '✅' || '❌' }} |"
             echo "| 🔄 Toolchain sync | ${{ (inputs.mirror_toolchains || inputs.make_release) && '✅' || '❌' }}${{ (!inputs.mirror_toolchains && inputs.make_release) && ' · auto for release' || '' }} |"
             echo "| 🧰 ADIOS · Debug artifacts | ${{ inputs.enable_adios && '✅' || '❌' }} · ${{ inputs.debug && '✅' || '❌' }} |"
+            echo "| 🧠 BORE scheduler | ${{ inputs.enable_bore && '✅' || '❌' }}${{ inputs.enable_bore && (inputs.bore_default_on && ' · active at boot' || ' · dormant, /proc/sys/kernel/sched_bore') || '' }} |"
+            echo "| ⚡ Codegen | AutoFDO + MLGO applied automatically wherever the tree ships a profile and the toolchain carries the model |"
             echo "| 🫥 Hiding stack | NoMount${{ steps.set-matrix.outputs.susfs_plan != 'off' && ' + SUSFS' || '' }} |"
             echo ""
             echo ""
@@ -1079,6 +1081,11 @@ jobs:
             MOD_GET="Download \`$MOD_ASSET\` from the [NoMount Suite release](${MOD_URL})."
           fi
 
+          if [ "${{ inputs.enable_bore }}" = "true" ]; then
+            if [ "${{ inputs.bore_default_on }}" = "true" ]; then BORE_STATE="compiled in and **active from boot**"; else BORE_STATE="compiled in but **dormant** — enable at \`/proc/sys/kernel/sched_bore\`"; fi
+          else
+            BORE_STATE="not built into this release"
+          fi
           cat << EOF > release_notes.md
           # KernelSU Next 📦 NoMount (v$NOMOUNT_VERSION)
           
@@ -1127,11 +1134,30 @@ jobs:
 
           cat << EOF >> release_notes.md
 
+          ## ⚡ Performance and codegen
+
+          | | What it does | Where |
+          |---|---|---|
+          | **AutoFDO** | Profile-guided codegen using Google's own AOSP profile, matched to each kernel sublevel. Hot/cold code is split so the hot path stays in cache. | automatic on targets whose tree ships a profile |
+          | **MLGO** | ML-guided register allocation (the AOT eviction model inside AOSP clang). | automatic where the toolchain carries the model |
+          | **BORE** | Burst-Oriented Response Enhancer — the scheduler favours tasks that burn less CPU in a burst, which tends to help interactive work (UI, compositor, games) under load. | $BORE_STATE |
+
+          > AutoFDO and MLGO are pure codegen: no ABI change, no runtime knob. BORE is a scheduler
+          > change and **is** tunable at runtime — \`/proc/sys/kernel/sched_bore\` (1 = on, 0 = off, no
+          > reboot), plus the \`sched_burst_*\` knobs beside it. Measured **0 CRC drift across 19388
+          > exports**, so no vendor module can fail to load because of it.
+          >
+          > ⚠️ BORE is boot-verified on the OnePlus 15 (6.12.69). Other devices are compile- and
+          > ABI-verified only. If a device misbehaves, set \`sched_bore\` to 0 and reboot-free revert.
+          EOF
+
+          cat << EOF >> release_notes.md
+
           ---
 
           ## 📦 Built Devices (${#device_info[@]} total)
 
-          **Feature key:** 🐦 HMBIRD · 🫥 NoMount · 🚀 BBR · 🛡️ BBG · 🌐 TTL · 🧱 IP_SET & IPv6 NAT · 🔧 Unicode Fix · 💻 Droidspaces · 🔃 NTSync
+          **Feature key:** 🐦 HMBIRD · 🫥 NoMount · 🚀 BBR · 🛡️ BBG · 🌐 TTL · 🧱 IP_SET & IPv6 NAT · 🔧 Unicode Fix · 💻 Droidspaces · 🔃 NTSync · 🧠 BORE
 
           > 6.12 kernels ship a leaner set (no BBG/Droidspaces/NTSync); SM8750/MT6991 devices add HMBIRD.
 

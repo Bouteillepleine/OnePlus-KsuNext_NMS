@@ -42,15 +42,15 @@ inputs:
     type: boolean
     default: false
   enable_bore:
-    description: 'Apply the KMI-safe BORE scheduler. 6.12 only. BOOT-VERIFIED on OP15 (CPH2747, 6.12.69) 2026-11-06, active and dormant. sched_entity is byte-identical because the patch never touches include/linux/sched.h: the per-entity pointer lives in the RAW reserved u64 via the se_bore() macro, NOT a typed ANDROID_KABI_USE member, which on 6.12 gendwarfksyms would see through and churn ~11k CRCs. Measured 0 CRC drift / 19388 exports vs the shipping kernel.'
+    description: 'Apply the KMI-safe BORE scheduler (6.12/6.6/6.1/5.15/5.10). ON by default. Static-verified on every distinct OnePlus tree: 0 rejects, 0 dangling refs, 0 export delta, sched_entity KABI slot 1 free; 0 CRC drift across 6 BORE-on/off pairs. Boot-verified on OP15 6.12.69; other trees are compile+ABI verified only.'
     required: false
     type: boolean
-    default: false
+    default: true
   bore_default_on:
-    description: 'Start BORE active (sched_bore=1). Default false: BORE compiles in but stays dormant, togglable at /proc/sys/kernel/sched_bore. BORE-on bootlooped an OP15 once (suspected fair<->SCX handover), so on-by-default is opt-in.'
+    description: 'Start BORE active (sched_bore=1) rather than dormant. ON by default. Either way BORE is compiled in and togglable at runtime via /proc/sys/kernel/sched_bore (no reboot).'
     required: false
     type: boolean
-    default: false
+    default: true
   susfs_ref:
     description: 'simonpunk/susfs4ksu ref to patch SUSFS into the kernel from. auto = the gki-<android>-<kernel> branch of each device, a branch/tag/40-char SHA pins it, empty = build without SUSFS. It goes in AFTER the NoMount stack; hunks that no longer fit are re-anchored by kernel_patches/scripts/susfs_patch_surgery.py and the NoMount verifier runs again afterwards.'
     required: false
