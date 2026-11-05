@@ -80,12 +80,12 @@ on:
         type: boolean
         default: false
       enable_bore:
-        description: '🧠 Apply the KMI-safe BORE scheduler (6.12 only; boot-verified on OP15 6.12.69, 0 CRC drift)'
+        description: 'Apply the KMI-safe BORE scheduler (6.12/6.6/6.1/5.15/5.10).'
         required: false
         type: boolean
         default: true
       bore_default_on:
-        description: '🧠 Start BORE active (sched_bore=1). OFF by default: BORE-on bootlooped an OP15 once, suspected fair<->SCX handover. Off still compiles BORE in; toggle at runtime via /proc/sys/kernel/sched_bore.'
+        description: 'Start BORE active (sched_bore=1).'
         required: false
         type: boolean
         default: true
