@@ -1304,6 +1304,14 @@ runs:
         echo "✅ SUSFS $SUSVER applied"
         echo "::endgroup::"
 
+    - name: Keep app seccomp filters when KSU grants root
+      shell: bash
+      run: |
+        echo "::group::Keep app seccomp filters"
+        set -euo pipefail
+        python3 "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/fix_ksu_app_profile_seccomp.py" "$KSU_FOLDER"
+        echo "::endgroup::"
+
     - name: Add BBG
       if: ${{ env.OP_BBG == 'true' }}
       shell: bash
