@@ -87,9 +87,7 @@ redirection inside the kernel:
   toolchain ships the model.
 - **BORE** (Burst-Oriented Response Enhancer), a scheduler that favours low-burst interactive
   tasks. On by default; `sched_bore` in `/proc/sys/kernel` turns it off at runtime without a
-  reboot. KMI-safe: `sched_entity` is untouched and 0 CRC drift was measured across 19388
-  exports. Boot-verified on the OnePlus 15 (6.12.69); other targets are compile and ABI
-  verified only.
+  reboot.
 - **BBRv3 and ECN** for TCP.
 - **WireGuard**, built into the kernel.
 - **IP sets and IPv6 NAT**, and the netfilter **TTL target**.
