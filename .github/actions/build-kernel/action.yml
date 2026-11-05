@@ -2229,6 +2229,12 @@ runs:
               else
                 echo "   MLGO regalloc advisor unavailable: this clang has no AOT regalloc-eviction model"
               fi
+              if clang -O2 -mllvm -regalloc-enable-priority-advisor=release --target=aarch64-linux-gnu -c "$MLGO_PROBE" -o /dev/null >/dev/null 2>&1; then
+                KCFLAGS_EXTRA="-mllvm -regalloc-enable-priority-advisor=release ${KCFLAGS_EXTRA}"
+                echo "🧠 MLGO regalloc priority advisor enabled"
+              else
+                echo "   MLGO regalloc priority advisor unavailable: this clang has no AOT priority model"
+              fi
               rm -f "$MLGO_PROBE"
             fi
             ;;
