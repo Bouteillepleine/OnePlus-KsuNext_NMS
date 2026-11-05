@@ -1632,11 +1632,18 @@ runs:
         cd "$COMMON_KERNEL_FOLDER"
         KERNEL_VERSION="${{ env.KERNEL_VER }}"
         
-        if [[ "$KERNEL_VERSION" == "6.12" ]] || [[ "$OP_BRANCH" == wild/mt* ]]; then
-          echo "::debug::Skipping CONFIG_BPF_STREAM_PARSER for $KERNEL_VERSION / $OP_BRANCH"
-        else
-          echo "CONFIG_BPF_STREAM_PARSER=y" >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
-        fi
+        # CONFIG_BPF_STREAM_PARSER is pinned off, not just left unset. ipset is
+        # netfilter and so are the TTL/HL targets; neither needs the BPF sockmap
+        # stream parser, and stock does not enable it. Turning it on selects
+        # NET_SOCK_MSG, which moves the CRC of 42 exported symbols -- bpf_prog_*,
+        # sk_msg_*, sk_psock_*, sock_map_*, tcp_bpf_*, esp*, xdp_do_redirect --
+        # off the values the ROM's own modules were built against, and under
+        # MODVERSIONS any module that requires one of them is then refused.
+        # Measured on OP-NORD-5 6.1.157: 42 CRCs moved with the line, 0 without
+        # it, and the same 30 IP_SET exports either way. Pinning it off also
+        # retires the 6.12 / wild/mt* special case this block used to carry,
+        # which was working around the same ABI drift without naming it.
+        echo "CONFIG_BPF_STREAM_PARSER=n" >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
         
         cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" <<EOF
         CONFIG_IP_SET=y
