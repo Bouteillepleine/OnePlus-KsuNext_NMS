@@ -2053,6 +2053,22 @@ runs:
         fi
         find . -name '*.orig' -delete
 
+        # set_protect_slice() is part of the BORE port but was moved out of the
+        # patch into a sed: OnePlus vendor trees perturb its surrounding context
+        # per-SoC and the hunk rejects on sm8850/canoe. With RUN_TO_PARITY off
+        # the function falls back to normalized_sysctl_sched_base_slice as the
+        # minimum quantum -- a frozen 700us that BORE never drives -- so the
+        # protection window would stop tracking BORE's base slice. The target
+        # line is unique. Mirrors kernel_patches/.github/workflows/gki-build-bore.yml.
+        if grep -q 'u64 slice = normalized_sysctl_sched_base_slice;' kernel/sched/fair.c; then
+          sed -i -E 's/^([[:space:]]*)u64 slice = normalized_sysctl_sched_base_slice;/\1u64 slice = sysctl_sched_base_slice;/' kernel/sched/fair.c
+          grep -q 'u64 slice = sysctl_sched_base_slice;' kernel/sched/fair.c \
+            || { echo "::error::set_protect_slice transform did not apply"; exit 1; }
+          echo "   set_protect_slice() now tracks sysctl_sched_base_slice"
+        else
+          echo "   set_protect_slice() not present in this tree, skipping"
+        fi
+
         DEFCONFIG="$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
         if ! grep -q "^CONFIG_SCHED_BORE=" "$DEFCONFIG"; then
           echo "CONFIG_SCHED_BORE=y" >> "$DEFCONFIG"
