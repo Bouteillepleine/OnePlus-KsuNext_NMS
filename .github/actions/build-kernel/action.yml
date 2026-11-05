@@ -1632,16 +1632,12 @@ runs:
         cd "$COMMON_KERNEL_FOLDER"
         KERNEL_VERSION="${{ env.KERNEL_VER }}"
         
-        # CONFIG_BPF_STREAM_PARSER is not needed by IP_SET or the TTL targets --
-        # ipset is netfilter, the stream parser is BPF sockmap -- and stock does
-        # not set it. Enabling it selects NET_SOCK_MSG, which moved the CRC of 42
-        # exported symbols (bpf_prog_*, sk_msg_*, sk_psock_*, sock_map_*,
-        # tcp_bpf_*, esp*, xdp_do_redirect) away from the values the ROM's own
-        # modules were built against; under MODVERSIONS any module requiring one
-        # of them is refused. Measured on OP-NORD-5 6.1.157: 42 moved with the
-        # line, 0 without it, same 30 IP_SET exports either way. That is also why
-        # 6.12 and wild/mt* had to be special-cased here; dropping the line
-        # outright retires the special case.
+        if [[ "$KERNEL_VERSION" == "6.12" ]] || [[ "$OP_BRANCH" == wild/mt* ]]; then
+          echo "::debug::Skipping CONFIG_BPF_STREAM_PARSER for $KERNEL_VERSION / $OP_BRANCH"
+        else
+          echo "CONFIG_BPF_STREAM_PARSER=y" >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
+        fi
+        
         cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" <<EOF
         CONFIG_IP_SET=y
         CONFIG_IP_SET_MAX=65534
