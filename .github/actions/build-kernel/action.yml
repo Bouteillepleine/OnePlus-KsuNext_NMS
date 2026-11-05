@@ -41,6 +41,11 @@ inputs:
     required: false
     type: boolean
     default: false
+  enable_bore:
+    description: 'Apply the KMI-safe BORE scheduler. 6.12 only for now, and NEVER BOOT-TESTED: sched_entity stays byte-identical (state lives out-of-line behind ANDROID_KABI_USE(1)), A/B CRC was 0 on 6.1/5.15/5.10, but no device has run it.'
+    required: false
+    type: boolean
+    default: false
   susfs_ref:
     description: 'simonpunk/susfs4ksu ref to patch SUSFS into the kernel from. auto = the gki-<android>-<kernel> branch of each device, a branch/tag/40-char SHA pins it, empty = build without SUSFS. It goes in AFTER the NoMount stack; hunks that no longer fit are re-anchored by kernel_patches/scripts/susfs_patch_surgery.py and the NoMount verifier runs again afterwards.'
     required: false
@@ -2008,6 +2013,53 @@ runs:
           patch -p1 < "$DEBLOAT_PATCH"
         fi
 
+    - name: 🧠 Apply BORE scheduler
+      shell: bash
+      if: ${{ inputs.enable_bore == true || inputs.enable_bore == 'true' }}
+      run: |
+        set -euo pipefail
+        echo "::group::Apply BORE scheduler"
+
+        if [ "${KERNEL_VER}" != "6.12" ]; then
+          echo "   BORE is wired for 6.12 only; skipping ${KERNEL_VER}"
+          echo "::endgroup::"
+          exit 0
+        fi
+
+        PATCH="$BOUTEILLE_KERNEL_PATCHES_FOLDER/experimental/bore_${KERNEL_VER}.patch"
+        [ -f "$PATCH" ] || { echo "::error::no BORE patch at $PATCH"; exit 1; }
+
+        cd "$COMMON_KERNEL_FOLDER"
+
+        if grep -q "CONFIG_SCHED_BORE" kernel/sched/sched.h 2>/dev/null; then
+          echo "   BORE already present in this tree, skipping"
+          echo "::endgroup::"
+          exit 0
+        fi
+
+        # EEVDF fix-A carries GKI's base_slice as mid-hunk context. OnePlus trees
+        # ship 750000ULL / "0.75 msec", which rejects, and fuzz cannot repair
+        # mid-hunk context. BORE overrides base_slice to nsecs_per_tick anyway, so
+        # normalising to GKI canon only rewrites dead code.
+        sed -i 's/750000ULL/700000ULL/g; s/0\.75 msec/0.70 msec/g' kernel/sched/fair.c
+
+        patch -p1 --ignore-whitespace -F3 < "$PATCH"
+
+        left="$(find . -name '*.rej' | sort)"
+        if [ -n "$left" ]; then
+          echo "::error::BORE left rejects:"
+          echo "$left" | sed 's/^/     /'
+          exit 1
+        fi
+        find . -name '*.orig' -delete
+
+        DEFCONFIG="$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
+        if ! grep -q "^CONFIG_SCHED_BORE=" "$DEFCONFIG"; then
+          echo "CONFIG_SCHED_BORE=y" >> "$DEFCONFIG"
+        fi
+        echo "   BORE applied, CONFIG_SCHED_BORE=y"
+        echo "::endgroup::"
+
     - name: 🔧 Add ADIOS I/O Scheduler
       shell: bash
       if: ${{ inputs.enable_adios == true || inputs.enable_adios == 'true' }}
@@ -2311,6 +2363,9 @@ runs:
         REQUIRED_SYMS="CONFIG_KSU"
         if [ "$AFDO_ON" = true ]; then
           REQUIRED_SYMS="$REQUIRED_SYMS CONFIG_AUTOFDO_CLANG"
+        fi
+        if [ "${{ inputs.enable_bore }}" = "true" ] && [ "${KERNEL_VER}" = "6.12" ]; then
+          REQUIRED_SYMS="$REQUIRED_SYMS CONFIG_SCHED_BORE"
         fi
         # KSU_SUSFS depends on THREAD_INFO_IN_TASK, so olddefconfig silently drops
         # the whole SUSFS set on a tree that lacks it and the kernel builds without

@@ -79,6 +79,11 @@ on:
         required: false
         type: boolean
         default: false
+      enable_bore:
+        description: '🧠 Apply the KMI-safe BORE scheduler (6.12 only, NEVER BOOT-TESTED)'
+        required: false
+        type: boolean
+        default: false
       nomount_ref:
         description: 'NoMount-Suite branch/ref for the Prism engine src + patches (default main; set a branch to validate it before it is released). The engine ships inside the Suite repo, under hookless/.'
         required: false
@@ -641,6 +646,7 @@ jobs:
           optimize_level: ${{ inputs.optimize_level }}
           build_timestamp: ${{ inputs.build_timestamp }}
           enable_adios: ${{ inputs.enable_adios }}
+          enable_bore: ${{ inputs.enable_bore }}
           susfs_ref: ${{ inputs.susfs_ref }}
           nomount_ref: ${{ inputs.nomount_ref }}
           patches_ref: ${{ inputs.patches_ref }}
