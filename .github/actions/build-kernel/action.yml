@@ -2025,11 +2025,14 @@ runs:
         set -euo pipefail
         echo "::group::Apply BORE scheduler"
 
-        if [ "${KERNEL_VER}" != "6.12" ]; then
-          echo "   BORE is wired for 6.12 only; skipping ${KERNEL_VER}"
-          echo "::endgroup::"
-          exit 0
-        fi
+        # All five versions are wired. Static-verified 2026-11-06 against every
+        # distinct OnePlus tree in configs/a16 (28 trees): 0 rejects, 0 dangling
+        # refs to ifdef'd-away symbols, 0 export delta, and sched_entity KABI
+        # slot 1 free everywhere (all four slots plain ANDROID_KABI_RESERVE).
+        case "${KERNEL_VER}" in
+          6.12|6.6|6.1|5.15|5.10) ;;
+          *) echo "   no BORE patch for ${KERNEL_VER}; skipping"; echo "::endgroup::"; exit 0 ;;
+        esac
 
         PATCH="$BOUTEILLE_KERNEL_PATCHES_FOLDER/experimental/bore_${KERNEL_VER}.patch"
         [ -f "$PATCH" ] || { echo "::error::no BORE patch at $PATCH"; exit 1; }
@@ -2045,7 +2048,10 @@ runs:
         # EEVDF fix-A carries GKI's base_slice as mid-hunk context. OnePlus trees
         # ship 750000ULL / "0.75 msec", which rejects, and fuzz cannot repair
         # mid-hunk context. BORE overrides base_slice to nsecs_per_tick anyway, so
-        # normalising to GKI canon only rewrites dead code.
+        # normalising to GKI canon only rewrites dead code. Needed on BOTH EEVDF
+        # versions: without it 6.6 rejects fix-A on all three OnePlus trees exactly
+        # as 6.12 does. No-op on the CFS trio (6.1/5.15/5.10), which have no
+        # base_slice at all.
         sed -i 's/750000ULL/700000ULL/g; s/0\.75 msec/0.70 msec/g' kernel/sched/fair.c
 
         patch -p1 --ignore-whitespace -F3 < "$PATCH"
@@ -2083,14 +2089,23 @@ runs:
         # with sched_bore=0, the fault is in the always-run storage/fork/init path,
         # not the scheduling logic. Only the initialiser changes, so CRCs are
         # untouched and the canonical patch stays as-is.
-        BORE_SRC="$COMMON_KERNEL_FOLDER/kernel/sched/bore.c"
+        # The definition lives in kernel/sched/bore.c on the EEVDF pair (6.12/6.6)
+        # but inline in kernel/sched/fair.c on the CFS trio, and the type is u8
+        # except on 5.15/5.10 where it is bool. Find it rather than assume.
+        BORE_SRC=""
+        for cand in "$COMMON_KERNEL_FOLDER/kernel/sched/bore.c" "$COMMON_KERNEL_FOLDER/kernel/sched/fair.c"; do
+          if [ -f "$cand" ] && grep -qE '^(u8|bool)[[:space:]]+__read_mostly[[:space:]]+sched_bore[[:space:]]*=[[:space:]]*1;' "$cand"; then
+            BORE_SRC="$cand"; break
+          fi
+        done
+        [ -n "$BORE_SRC" ] || { echo "::error::sched_bore definition not found after patching"; exit 1; }
         if [ "${{ inputs.bore_default_on }}" = "true" ]; then
           echo "   sched_bore defaults to 1 (active from boot)"
         else
-          sed -i -E 's/^(u8[[:space:]]+__read_mostly[[:space:]]+sched_bore[[:space:]]*=[[:space:]]*)1;/\10;/' "$BORE_SRC"
-          grep -qE '^u8[[:space:]]+__read_mostly[[:space:]]+sched_bore[[:space:]]*=[[:space:]]*0;' "$BORE_SRC" \
-            || { echo "::error::could not default sched_bore to 0"; exit 1; }
-          echo "   sched_bore defaults to 0 (dormant; enable at /proc/sys/kernel/sched_bore)"
+          sed -i -E 's/^((u8|bool)[[:space:]]+__read_mostly[[:space:]]+sched_bore[[:space:]]*=[[:space:]]*)1;/\10;/' "$BORE_SRC"
+          grep -qE '^(u8|bool)[[:space:]]+__read_mostly[[:space:]]+sched_bore[[:space:]]*=[[:space:]]*0;' "$BORE_SRC" \
+            || { echo "::error::could not default sched_bore to 0 in $BORE_SRC"; exit 1; }
+          echo "   sched_bore defaults to 0 in ${BORE_SRC##*/} (dormant; enable at /proc/sys/kernel/sched_bore)"
         fi
 
         DEFCONFIG="$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
@@ -2404,9 +2419,10 @@ runs:
         if [ "$AFDO_ON" = true ]; then
           REQUIRED_SYMS="$REQUIRED_SYMS CONFIG_AUTOFDO_CLANG"
         fi
-        if [ "${{ inputs.enable_bore }}" = "true" ] && [ "${KERNEL_VER}" = "6.12" ]; then
-          REQUIRED_SYMS="$REQUIRED_SYMS CONFIG_SCHED_BORE"
-        fi
+        case "${KERNEL_VER}" in
+          6.12|6.6|6.1|5.15|5.10)
+            [ "${{ inputs.enable_bore }}" = "true" ] && REQUIRED_SYMS="$REQUIRED_SYMS CONFIG_SCHED_BORE" ;;
+        esac
         # KSU_SUSFS depends on THREAD_INFO_IN_TASK, so olddefconfig silently drops
         # the whole SUSFS set on a tree that lacks it and the kernel builds without
         # any of the hiding it was asked for. The list comes from the Apply SUSFS
