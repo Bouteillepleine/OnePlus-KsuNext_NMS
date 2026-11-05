@@ -183,6 +183,17 @@ jobs:
             echo "ℹ️  No target model selected. Building all configs matching op_model='$input'."
           fi
 
+          # Two configs for one device that resolve to the same sublevel build
+          # the same AK3 zip and collide on its name. See .github/scripts/dedupe_matrix.py.
+          echo "$filtered" > matrix_filtered.json
+          if python3 -I .github/scripts/dedupe_matrix.py matrix_filtered.json \
+               -o matrix_deduped.json --manifests manifests; then
+            filtered=$(cat matrix_deduped.json)
+          else
+            echo "::warning::matrix dedupe failed; keeping every leg"
+          fi
+          rm -f matrix_filtered.json matrix_deduped.json
+
           count=$(jq 'length' <<<"$filtered")
           
           filtered=$(echo "$filtered" | jq '
