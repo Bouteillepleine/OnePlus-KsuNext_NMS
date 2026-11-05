@@ -908,6 +908,10 @@ runs:
       shell: bash
       run: bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/fix_oplus_duplicate_exports.sh"
 
+    - name: Fix OPlus task_struct KABI slots
+      shell: bash
+      run: python3 -I "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/fix_oplus_task_struct_kabi.py"
+
     - name: Drop the unbuildable wl2868c regulator
       shell: bash
       run: |
