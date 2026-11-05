@@ -42,7 +42,7 @@ inputs:
     type: boolean
     default: false
   enable_bore:
-    description: 'Apply the KMI-safe BORE scheduler. 6.12 only for now, and NEVER BOOT-TESTED: sched_entity stays byte-identical (state lives out-of-line behind ANDROID_KABI_USE(1)), A/B CRC was 0 on 6.1/5.15/5.10, but no device has run it.'
+    description: 'Apply the KMI-safe BORE scheduler. 6.12 only. BOOT-VERIFIED on OP15 (CPH2747, 6.12.69) 2026-11-06, active and dormant. sched_entity is byte-identical because the patch never touches include/linux/sched.h: the per-entity pointer lives in the RAW reserved u64 via the se_bore() macro, NOT a typed ANDROID_KABI_USE member, which on 6.12 gendwarfksyms would see through and churn ~11k CRCs. Measured 0 CRC drift / 19388 exports vs the shipping kernel.'
     required: false
     type: boolean
     default: false

@@ -80,7 +80,7 @@ on:
         type: boolean
         default: false
       enable_bore:
-        description: '🧠 Apply the KMI-safe BORE scheduler (6.12 only, NEVER BOOT-TESTED)'
+        description: '🧠 Apply the KMI-safe BORE scheduler (6.12 only; boot-verified on OP15 6.12.69, 0 CRC drift)'
         required: false
         type: boolean
         default: false
