@@ -42,12 +42,12 @@ inputs:
     type: boolean
     default: false
   enable_bore:
-    description: 'Apply the KMI-safe BORE scheduler (6.12/6.6/6.1/5.15/5.10).'
+    description: 'Apply the KMI-safe BORE scheduler (6.12/6.6/6.1/5.15/5.10). ON by default.'
     required: false
     type: boolean
     default: true
   bore_default_on:
-    description: 'Start BORE active (sched_bore=1).'
+    description: 'Start BORE active (sched_bore=1). ON by default.'
     required: false
     type: boolean
     default: true
