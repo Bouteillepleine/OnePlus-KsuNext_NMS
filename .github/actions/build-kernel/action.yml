@@ -2108,6 +2108,40 @@ runs:
           echo "   sched_bore defaults to 0 in ${BORE_SRC##*/} (dormant; enable at /proc/sys/kernel/sched_bore)"
         fi
 
+        # 5.10 only: the dequeue_task_fair BORE block was removed from the patch.
+        # OnePlus 5.10 trees carry an OPLUS_SCHED_TUNE block between util_est_dequeue()
+        # and for_each_sched_entity() where the patch expects a blank line, so patch -F3
+        # dropped the context and applied the hunk with fuzz 3 INTO the function
+        # declarator -> "fair.c:5937 expected function body". 0 rejects, so the reject
+        # assertion never fired. Anchored on util_est_dequeue(&rq->cfs, p), unique in all
+        # three OnePlus 5.10 trees and in vanilla ACK 5.10.
+        if [ "${KERNEL_VER}" = "5.10" ]; then
+          FAIRC="$COMMON_KERNEL_FOLDER/kernel/sched/fair.c"
+          n=$(grep -c 'util_est_dequeue(&rq->cfs, p);' "$FAIRC")
+          [ "$n" = "1" ] || { echo "::error::dequeue anchor not unique in fair.c ($n matches)"; exit 1; }
+          if awk '/util_est_dequeue\(&rq->cfs, p\);/{getline; if ($0 ~ /^#ifdef CONFIG_SCHED_BORE/) f=1} END{exit !f}' "$FAIRC"; then
+            echo "   dequeue_task_fair BORE block already present"
+          else
+            awk '
+            /util_est_dequeue\(&rq->cfs, p\);/ && !ins {
+              print
+              print "#ifdef CONFIG_SCHED_BORE"
+              print "\tif (task_sleep) {"
+              print "\t\tcfs_rq = cfs_rq_of(se);"
+              print "\t\tif (cfs_rq->curr == se)"
+              print "\t\t\tupdate_curr(cfs_rq);"
+              print "\t\trestart_burst(se);"
+              print "\t}"
+              print "#endif // CONFIG_SCHED_BORE"
+              ins=1; next
+            }
+            {print}' "$FAIRC" > "$FAIRC.new" && mv "$FAIRC.new" "$FAIRC"
+            awk '/util_est_dequeue\(&rq->cfs, p\);/{getline; if ($0 ~ /^#ifdef CONFIG_SCHED_BORE/) f=1} END{exit !f}' "$FAIRC" \
+              || { echo "::error::dequeue_task_fair BORE block did not land"; exit 1; }
+            echo "   dequeue_task_fair BORE block inserted (5.10)"
+          fi
+        fi
+
         DEFCONFIG="$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
         if ! grep -q "^CONFIG_SCHED_BORE=" "$DEFCONFIG"; then
           echo "CONFIG_SCHED_BORE=y" >> "$DEFCONFIG"
