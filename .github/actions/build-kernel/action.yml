@@ -1079,14 +1079,6 @@ runs:
     # Bisected on OP11: boots on 2482c569, bootloops on 8b9d7a7a, engine and
     # kernel source held constant. No-op on a KernelSU-Next without the defect,
     # and a no-op at runtime wherever CONFIG_CFI_CLANG is off.
-    - name: Keep app seccomp filters when app_profile grants root
-      shell: bash
-      run: |
-        echo "::group::Keep app seccomp filters"
-        set -euo pipefail
-        python3 "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/fix_ksu_app_profile_seccomp.py" "$KSU_FOLDER"
-        echo "::endgroup::"
-
     - name: Fix KSU SELinux symbol calls under CFI
       shell: bash
       run: |
