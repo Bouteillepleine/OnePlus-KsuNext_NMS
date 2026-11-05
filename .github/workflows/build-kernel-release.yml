@@ -84,6 +84,11 @@ on:
         required: false
         type: boolean
         default: false
+      bore_default_on:
+        description: '🧠 Start BORE active (sched_bore=1). OFF by default: BORE-on bootlooped an OP15 once, suspected fair<->SCX handover. Off still compiles BORE in; toggle at runtime via /proc/sys/kernel/sched_bore.'
+        required: false
+        type: boolean
+        default: false
       nomount_ref:
         description: 'NoMount-Suite branch/ref for the Prism engine src + patches (default main; set a branch to validate it before it is released). The engine ships inside the Suite repo, under hookless/.'
         required: false
@@ -647,6 +652,7 @@ jobs:
           build_timestamp: ${{ inputs.build_timestamp }}
           enable_adios: ${{ inputs.enable_adios }}
           enable_bore: ${{ inputs.enable_bore }}
+          bore_default_on: ${{ inputs.bore_default_on }}
           susfs_ref: ${{ inputs.susfs_ref }}
           nomount_ref: ${{ inputs.nomount_ref }}
           patches_ref: ${{ inputs.patches_ref }}

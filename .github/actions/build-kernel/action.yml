@@ -46,6 +46,11 @@ inputs:
     required: false
     type: boolean
     default: false
+  bore_default_on:
+    description: 'Start BORE active (sched_bore=1). Default false: BORE compiles in but stays dormant, togglable at /proc/sys/kernel/sched_bore. BORE-on bootlooped an OP15 once (suspected fair<->SCX handover), so on-by-default is opt-in.'
+    required: false
+    type: boolean
+    default: false
   susfs_ref:
     description: 'simonpunk/susfs4ksu ref to patch SUSFS into the kernel from. auto = the gki-<android>-<kernel> branch of each device, a branch/tag/40-char SHA pins it, empty = build without SUSFS. It goes in AFTER the NoMount stack; hunks that no longer fit are re-anchored by kernel_patches/scripts/susfs_patch_surgery.py and the NoMount verifier runs again afterwards.'
     required: false
@@ -2067,6 +2072,25 @@ runs:
           echo "   set_protect_slice() now tracks sysctl_sched_base_slice"
         else
           echo "   set_protect_slice() not present in this tree, skipping"
+        fi
+
+        # BORE-on from boot bootlooped an OP15 once (6.12.23/RSKSU); the KABI slot
+        # was cleared by BTF, so the suspect is BORE's fair.c hooks during the
+        # fair<->SCX handover when oplusHmbirdBpfManager attaches ~24s in. Default
+        # the runtime switch off: BORE still compiles in and every hook is built,
+        # but it stays dormant until `echo 1 > /proc/sys/kernel/sched_bore`. That
+        # both ships a bootable kernel and bisects the hang -- if it still loops
+        # with sched_bore=0, the fault is in the always-run storage/fork/init path,
+        # not the scheduling logic. Only the initialiser changes, so CRCs are
+        # untouched and the canonical patch stays as-is.
+        BORE_SRC="$COMMON_KERNEL_FOLDER/kernel/sched/bore.c"
+        if [ "${{ inputs.bore_default_on }}" = "true" ]; then
+          echo "   sched_bore defaults to 1 (active from boot)"
+        else
+          sed -i -E 's/^(u8[[:space:]]+__read_mostly[[:space:]]+sched_bore[[:space:]]*=[[:space:]]*)1;/\10;/' "$BORE_SRC"
+          grep -qE '^u8[[:space:]]+__read_mostly[[:space:]]+sched_bore[[:space:]]*=[[:space:]]*0;' "$BORE_SRC" \
+            || { echo "::error::could not default sched_bore to 0"; exit 1; }
+          echo "   sched_bore defaults to 0 (dormant; enable at /proc/sys/kernel/sched_bore)"
         fi
 
         DEFCONFIG="$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
