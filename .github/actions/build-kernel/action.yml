@@ -2054,13 +2054,14 @@ runs:
         # base_slice at all.
         sed -i 's/750000ULL/700000ULL/g; s/0\.75 msec/0.70 msec/g' kernel/sched/fair.c
 
-        # -F0, deliberately. Fuzz does not reject -- it RELOCATES. In CI, KSU/SUSFS/
-        # NoMount edit core.c and fair.c before this step, so hunk context has moved
-        # and -F3 silently dropped statement inserts at FILE SCOPE (sched_bore_init
-        # in core.c; the dequeue block at fair.c:6415), giving 0 rejects and a
-        # compile error far away. All 82 distinct OnePlus trees apply at -F0 with
-        # zero rejects, so exactness is free and any future drift now fails loudly.
-        patch -p1 --ignore-whitespace -F0 < "$PATCH"
+        # -F3, NOT -F0. A pristine-tree scan said all 82 trees apply at -F0 with zero
+        # rejects, but that measurement cannot predict CI: KSU/SUSFS/NoMount edit
+        # fair.c/core.c BEFORE this step, so legitimate context drift needs fuzz.
+        # -F0 rejected 6.12 hunk #9 (fair.c:1353) on trees that build fine with -F3.
+        # Fuzz is kept, and misplacement is caught by the brace-depth assertions
+        # below instead -- the two hunks that actually relocated are no longer in
+        # the patch at all, they are anchored inserts.
+        patch -p1 --ignore-whitespace -F3 < "$PATCH"
 
         left="$(find . -name '*.rej' | sort)"
         if [ -n "$left" ]; then
