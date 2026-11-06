@@ -2054,7 +2054,13 @@ runs:
         # base_slice at all.
         sed -i 's/750000ULL/700000ULL/g; s/0\.75 msec/0.70 msec/g' kernel/sched/fair.c
 
-        patch -p1 --ignore-whitespace -F3 < "$PATCH"
+        # -F0, deliberately. Fuzz does not reject -- it RELOCATES. In CI, KSU/SUSFS/
+        # NoMount edit core.c and fair.c before this step, so hunk context has moved
+        # and -F3 silently dropped statement inserts at FILE SCOPE (sched_bore_init
+        # in core.c; the dequeue block at fair.c:6415), giving 0 rejects and a
+        # compile error far away. All 82 distinct OnePlus trees apply at -F0 with
+        # zero rejects, so exactness is free and any future drift now fails loudly.
+        patch -p1 --ignore-whitespace -F0 < "$PATCH"
 
         left="$(find . -name '*.rej' | sort)"
         if [ -n "$left" ]; then
@@ -2108,14 +2114,14 @@ runs:
           echo "   sched_bore defaults to 0 in ${BORE_SRC##*/} (dormant; enable at /proc/sys/kernel/sched_bore)"
         fi
 
-        # 5.10 only: the dequeue_task_fair BORE block was removed from the patch.
+        # 6.6/6.1/5.15/5.10: the dequeue_task_fair BORE block was removed from the patch.
         # OnePlus 5.10 trees carry an OPLUS_SCHED_TUNE block between util_est_dequeue()
         # and for_each_sched_entity() where the patch expects a blank line, so patch -F3
         # dropped the context and applied the hunk with fuzz 3 INTO the function
         # declarator -> "fair.c:5937 expected function body". 0 rejects, so the reject
         # assertion never fired. Anchored on util_est_dequeue(&rq->cfs, p), unique in all
         # three OnePlus 5.10 trees and in vanilla ACK 5.10.
-        if [ "${KERNEL_VER}" = "5.10" ]; then
+        case "${KERNEL_VER}" in 6.6|6.1|5.15|5.10)
           FAIRC="$COMMON_KERNEL_FOLDER/kernel/sched/fair.c"
           n=$(grep -c 'util_est_dequeue(&rq->cfs, p);' "$FAIRC")
           [ "$n" = "1" ] || { echo "::error::dequeue anchor not unique in fair.c ($n matches)"; exit 1; }
@@ -2138,9 +2144,43 @@ runs:
             {print}' "$FAIRC" > "$FAIRC.new" && mv "$FAIRC.new" "$FAIRC"
             awk '/util_est_dequeue\(&rq->cfs, p\);/{getline; if ($0 ~ /^#ifdef CONFIG_SCHED_BORE/) f=1} END{exit !f}' "$FAIRC" \
               || { echo "::error::dequeue_task_fair BORE block did not land"; exit 1; }
-            echo "   dequeue_task_fair BORE block inserted (5.10)"
+            echo "   dequeue_task_fair BORE block inserted"
           fi
-        fi
+          awk -v pat='restart_burst(se);' -v what='dequeue BORE block' '
+            { line=$0; sub(/\/\/.*/,"",line)
+              if (!f && index($0,pat)>0) { f=1
+                if (d<=0) { printf("::error::%s at brace depth %d (file scope), line %d\n",what,d,NR); bad=1 }
+                else printf("   %s verified inside a function, line %d (depth %d)\n",what,NR,d) }
+              o=gsub(/\{/,"{",line); c=gsub(/\}/,"}",line); d+=o-c }
+            END{ if(!f){printf("::error::%s not found\n",what); exit 1} exit bad?1:0 }' "$FAIRC" || exit 1
+          ;;
+        esac
+
+        # 6.12/6.6: sched_bore_init() pulled out of the patch for the same reason.
+        # Anchored on wait_bit_init(), unique in every affected tree and vanilla ACK.
+        case "${KERNEL_VER}" in 6.12|6.6)
+          COREC="$COMMON_KERNEL_FOLDER/kernel/sched/core.c"
+          n=$(grep -c '^[[:space:]]*wait_bit_init();' "$COREC")
+          [ "$n" = "1" ] || { echo "::error::wait_bit_init() anchor not unique in core.c ($n)"; exit 1; }
+          if grep -q 'sched_bore_init();' "$COREC"; then
+            echo "   sched_bore_init() already present"
+          else
+            awk '
+              /^[[:space:]]*wait_bit_init\(\);/ && !ins {
+                print "#ifdef CONFIG_SCHED_BORE"; print "\tsched_bore_init();"
+                print "#endif // CONFIG_SCHED_BORE"; print ""; ins=1 }
+              {print}' "$COREC" > "$COREC.new" && mv "$COREC.new" "$COREC"
+            echo "   sched_bore_init() inserted"
+          fi
+          awk -v pat='sched_bore_init();' -v what='sched_bore_init()' '
+            { line=$0; sub(/\/\/.*/,"",line)
+              if (!f && index($0,pat)>0 && $0 !~ /^[[:space:]]*(extern|void)/) { f=1
+                if (d<=0) { printf("::error::%s at brace depth %d (file scope), line %d\n",what,d,NR); bad=1 }
+                else printf("   %s verified inside sched_init(), line %d (depth %d)\n",what,NR,d) }
+              o=gsub(/\{/,"{",line); c=gsub(/\}/,"}",line); d+=o-c }
+            END{ if(!f){printf("::error::%s not found\n",what); exit 1} exit bad?1:0 }' "$COREC" || exit 1
+          ;;
+        esac
 
         DEFCONFIG="$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
         if ! grep -q "^CONFIG_SCHED_BORE=" "$DEFCONFIG"; then
