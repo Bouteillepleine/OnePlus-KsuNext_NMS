@@ -1161,11 +1161,16 @@ jobs:
 
           > 6.12 kernels ship a leaner set (no BBG/Droidspaces/NTSync); SM8750/MT6991 devices add HMBIRD.
 
+          > ⚠️ **Pick by the banner, not the sublevel.** Run \`uname -r\` and take the zip whose
+          > banner matches field for field. The KMI generation (\`android16-5\` vs \`android16-6\`)
+          > decides whether your vendor modules load at all, and the sublevel tells which firmware
+          > the zip was cut for. A mismatch is refused before the partition is touched.
+
           <details>
           <summary>📥 Expand the full list of ${#device_info[@]} device downloads</summary>
 
-          | Model | OS Version | Kernel Version | Features |
-          |-------|------------|----------------|----------|
+          | Model | OS Version | Kernel Version | Must match your \`uname -r\` | Features |
+          |-------|------------|----------------|------------------------------|----------|
           EOF
           
           while IFS= read -r full_key; do
@@ -1178,7 +1183,7 @@ jobs:
             feature_flags=$(jq -r --arg MODEL "$model" --arg ORIG_MODEL "$possible_orig_model" --arg OS "$os_ver" '
               ([ .[] | select(.model == $ORIG_MODEL and .os_version == $OS) ][0]) //
               ([ .[] | select(.model == $MODEL      and .os_version == $OS) ][0]) |
-              "\(.hmbird // false)\t\(.NMS // false)\t\(.bbr // false)\t\(.bbr3 // false)\t\(.bbg // false)\t\(.ttl // false)\t\(.ip_set // false)\t\(.unicode // false)\t\(.ds // false)\t\(.ntsync // false)"
+              "\(.hmbird // false)\t\(.NMS // false)\t\(.bbr // false)\t\(.bbr3 // false)\t\(.bbg // false)\t\(.ttl // false)\t\(.ip_set // false)\t\(.unicode // false)\t\(.ds // false)\t\(.ntsync // false)\t\(.uname // "")"
             ' <<< "$JSON_BUILD_DATA")
             
             features=()
@@ -1186,7 +1191,7 @@ jobs:
               echo "Warning: No JSON entry found for model: $model" >&2
               features_str="N/A"
             else
-              IFS=$'\t' read -r hmbird nms bbr bbr3 bbg ttl ip_set unicode ds ntsync <<< "$feature_flags"
+              IFS=$'\t' read -r hmbird nms bbr bbr3 bbg ttl ip_set unicode ds ntsync op_uname <<< "$feature_flags"
               
               [[ "$hmbird" == "true" ]] && features+=("🐦 HMBIRD")
               [[ "$nms" == "true" ]] && features+=("🫥 NoMount")
@@ -1229,8 +1234,13 @@ jobs:
             
             download_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${NEW_TAG}/${zipfile}.zip"
             model_link="[$model]($download_url)"
-            printf "| %s | %-10s | %-16s | %-48s |\n" \
-              "$model_link" "$os_display_version" "$kernel_ver" "$features_str" >> release_notes.md
+            if [ -n "$op_uname" ]; then
+              banner="${full_kv}-${kernel_ver%%-*}-${op_uname}"
+            else
+              banner="n/a"
+            fi
+            printf "| %s | %-10s | %-16s | \`%s\` | %-48s |\n" \
+              "$model_link" "$os_display_version" "$kernel_ver" "$banner" "$features_str" >> release_notes.md
           done < <(printf '%s\n' "${!device_info[@]}" | sort)
           
           if [ ${#device_info[@]} -gt 0 ]; then

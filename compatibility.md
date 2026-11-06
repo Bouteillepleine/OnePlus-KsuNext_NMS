@@ -1,4 +1,36 @@
 # Compatibility of OnePlus Kernels
+
+## 0. Picking the right ZIP
+
+Run `uname -r` on the device and match the **whole** string, field for field, against the
+`uname -r` column of the release you are downloading from:
+
+```
+6.12.23-android16-5-gb2a876903b49-ab14541642-4k
+|       |         | |
+|       |         | +- AOSP build: which firmware revision it was cut for
+|       |         +--- KMI generation: decides whether your vendor modules load
+|       +------------- GKI branch
++--------------------- sublevel
+```
+
+The sublevel on its own is **not** enough. On the OnePlus 15 every 6.12 ZIP reads
+`android16` and they differ only past that:
+
+| ZIP | `uname -r` | OxygenOS build |
+|---|---|---|
+| `...android16-6.12.23...` | `6.12.23-android16-5-...` | 16.0.10.500 |
+| `...android16-6.12.58...` | `6.12.58-android16-6-...` | 16.0.10.601 |
+| `...android16-6.12.69...` | `6.12.69-android16-6-...` | 17.0.0.105 |
+
+OnePlus crossed KMI generation 5 -> 6 at 16.0.10.601, and every vendor module is
+`modversions`, so a ZIP from the wrong side of that line loads none of them and the device
+dies at the splash screen. Flashing stock `init_boot` does not undo it -- the kernel lives
+in `boot`, so restore stock `boot` instead.
+
+The ZIP checks this itself and aborts before the partition is touched, printing the two
+banners it compared. To cross-flash deliberately (see the non-OnePlus list below), set
+`do.check_boot_version=0` in `anykernel.sh` inside the ZIP.
 ## 1. OnePlus Devices
 
 <table>
