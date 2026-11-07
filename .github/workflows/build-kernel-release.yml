@@ -51,6 +51,16 @@ on:
         type: choice
         options: [O2, O3]
         default: O2
+      enable_mlgo:
+        description: 'MLGO (ML-guided register allocation). ON by default; applies on LTO=none targets.'
+        required: false
+        type: boolean
+        default: true
+      enable_afdo:
+        description: 'AutoFDO (AOSP profile-guided codegen). ON by default; applies where the tree ships a profile.'
+        required: false
+        type: boolean
+        default: true
       build_timestamp:
         description: 'Custom kernel build timestamp for uname -a, applied to EVERY device (e.g. "Fri Dec 5 02:05:55 UTC 2025"). Leave empty to use each model''s own stock timestamp from its config (ktimestamp), falling back to the current time.'
         type: string
@@ -651,6 +661,8 @@ jobs:
           ksu_type: ${{ matrix.ksu_type }}
           ksu_branch_or_hash: ${{ matrix.ksu_resolved_hash }}
           optimize_level: ${{ inputs.optimize_level }}
+          enable_mlgo: ${{ inputs.enable_mlgo }}
+          enable_afdo: ${{ inputs.enable_afdo }}
           build_timestamp: ${{ inputs.build_timestamp }}
           enable_adios: ${{ inputs.enable_adios }}
           enable_bore: ${{ inputs.enable_bore }}

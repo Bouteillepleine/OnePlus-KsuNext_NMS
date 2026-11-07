@@ -26,6 +26,16 @@ inputs:
     required: false
     type: string
     default: O2
+  enable_mlgo:
+    description: 'MLGO: ML-guided register allocation (the AOT eviction model inside AOSP clang). ON by default; only applies on LTO=none, where regalloc runs at compile time.'
+    required: false
+    type: boolean
+    default: true
+  enable_afdo:
+    description: 'AutoFDO: profile-guided codegen from the AOSP profile shipped in the tree. ON by default; only applies where the tree carries a profile.'
+    required: false
+    type: boolean
+    default: true
   clean:
     description: 'Force clean build without ccache acceleration'
     required: false
@@ -184,6 +194,8 @@ runs:
         ntsync="$OP_NTSYNC"
         blacklist_modules="$OP_BLACKLIST_MODULES"
         optimize='${{ inputs.optimize_level }}'
+        mlgo='${{ inputs.enable_mlgo }}'
+        afdo='${{ inputs.enable_afdo }}'
         
         errors=()
         
@@ -333,6 +345,16 @@ runs:
         case "$optimize" in
           O2|O3) ;;
           *) errors+=("optimize_level must be O2 or O3. Got: '$optimize'"); ;;
+        esac
+        
+        case "$mlgo" in
+          true|false|'') ;;
+          *) errors+=("enable_mlgo must be 'true' or 'false'. Got: '$mlgo'"); ;;
+        esac
+        
+        case "$afdo" in
+          true|false|'') ;;
+          *) errors+=("enable_afdo must be 'true' or 'false'. Got: '$afdo'"); ;;
         esac
         
         if [ ${#errors[@]} -ne 0 ]; then
@@ -2406,31 +2428,40 @@ runs:
             ;;
         esac
         
-        case "${{ env.OP_LTO}}" in
-          none)
-            if [ "$OP_BRANCH" = "wild/mt6993" ]; then
-              echo "   MLGO regalloc advisor skipped on $OP_BRANCH"
-            else
-              MLGO_PROBE="${RUNNER_TEMP:-/tmp}/mlgo_probe.c"
-              printf '%s' 'long f(long*a){long s=0,b=1,c=2,d=3,e=4,g=5,h=6,i=7,j=8,k=9,l=10,m=11,n=12,o=13,p=14,q=15;for(int x=0;x<16;x++){s+=a[x]^b;b*=a[x]+c;c^=a[x]|d;d+=a[x]&e;e*=a[x]^g;g+=a[x]+h;h^=a[x]*i;i+=a[x]^j;j*=a[x]+k;k^=a[x]|l;l+=a[x]&m;m*=a[x]^n;n+=a[x]+o;o^=a[x]*p;p+=a[x]^q;q*=a[x]+s;}return s^b^c^d^e^g^h^i^j^k^l^m^n^o^p^q;}' > "$MLGO_PROBE"
-              if clang -O2 -mllvm -regalloc-enable-advisor=release --target=aarch64-linux-gnu -c "$MLGO_PROBE" -o /dev/null >/dev/null 2>&1; then
-                KCFLAGS_EXTRA="-mllvm -regalloc-enable-advisor=release ${KCFLAGS_EXTRA}"
-                echo "🧠 MLGO regalloc advisor enabled"
-              else
-                echo "   MLGO regalloc advisor unavailable: this clang has no AOT regalloc-eviction model"
-              fi
-              rm -f "$MLGO_PROBE"
-            fi
-            ;;
-          *)
-            echo "   MLGO regalloc advisor not applicable on LTO=${{ env.OP_LTO}}: regalloc runs at link time"
-            ;;
-        esac
+        # Only `false` turns these off. An empty value means a caller that did not set the
+        # input, and both are on by default, so it must not fail the build.
+        MLGO_ON=false
+        if [ "${{ inputs.enable_mlgo }}" = false ]; then
+          echo "   MLGO regalloc advisor off: enable_mlgo=false"
+        elif [ "${{ env.OP_LTO}}" != none ]; then
+          echo "   MLGO regalloc advisor not applicable on LTO=${{ env.OP_LTO}}: regalloc runs at link time"
+        elif [ "$OP_BRANCH" = "wild/mt6993" ]; then
+          echo "   MLGO regalloc advisor skipped on $OP_BRANCH"
+        else
+          MLGO_PROBE="${RUNNER_TEMP:-/tmp}/mlgo_probe.c"
+          # 16 live values on purpose: a trivial function gives the allocator no eviction
+          # decision to make, so the release advisor is never consulted and the probe
+          # passes on a clang that carries no model.
+          printf '%s' 'long f(long*a){long s=0,b=1,c=2,d=3,e=4,g=5,h=6,i=7,j=8,k=9,l=10,m=11,n=12,o=13,p=14,q=15;for(int x=0;x<16;x++){s+=a[x]^b;b*=a[x]+c;c^=a[x]|d;d+=a[x]&e;e*=a[x]^g;g+=a[x]+h;h^=a[x]*i;i+=a[x]^j;j*=a[x]+k;k^=a[x]|l;l+=a[x]&m;m*=a[x]^n;n+=a[x]+o;o^=a[x]*p;p+=a[x]^q;q*=a[x]+s;}return s^b^c^d^e^g^h^i^j^k^l^m^n^o^p^q;}' > "$MLGO_PROBE"
+          if clang -O2 -mllvm -regalloc-enable-advisor=release --target=aarch64-linux-gnu -c "$MLGO_PROBE" -o /dev/null >/dev/null 2>&1; then
+            KCFLAGS_EXTRA="-mllvm -regalloc-enable-advisor=release ${KCFLAGS_EXTRA}"
+            MLGO_ON=true
+            echo "🧠 MLGO regalloc advisor enabled"
+          else
+            echo "   MLGO regalloc advisor unavailable: this clang has no AOT regalloc-eviction model"
+          fi
+          rm -f "$MLGO_PROBE"
+        fi
 
         AFDO_ON=false
         AFDO_PROFILE=""
         AFDO_ARGS=()
-        case "$OP_BRANCH" in
+        AFDO_BRANCH="$OP_BRANCH"
+        if [ "${{ inputs.enable_afdo }}" = false ]; then
+          echo "   AutoFDO off: enable_afdo=false"
+          AFDO_BRANCH=disabled
+        fi
+        case "$AFDO_BRANCH" in
           wild/sm8750|wild/sm8850|wild/sm8845)
             for p in "$COMMON_KERNEL_FOLDER/gki/aarch64/afdo/kernel.afdo" "$COMMON_KERNEL_FOLDER/android/gki/aarch64/afdo/kernel.afdo"; do
               if [ -f "$p" ]; then AFDO_PROFILE="$p"; break; fi
@@ -2531,6 +2562,7 @@ runs:
         echo "KCFLAGS: ${KCFLAGS:0:150}..."
         echo "KCPPFLAGS: ${KCPPFLAGS:0:150}..."
         if [ "$AFDO_ON" = true ]; then echo "AutoFDO: $AFDO_PROFILE"; else echo "AutoFDO: off"; fi
+        echo "MLGO: $MLGO_ON"
         echo "Timestamp: $KBUILD_BUILD_TIMESTAMP"
         echo "Workspace: $WORKSPACE"
         
