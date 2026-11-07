@@ -27,12 +27,12 @@ inputs:
     type: string
     default: O2
   enable_mlgo:
-    description: 'MLGO: ML-guided register allocation (the AOT eviction model inside AOSP clang). ON by default; goes in KCFLAGS on LTO=none, and to the linker via ld-wrapper otherwise, because regalloc then runs at link time.'
+    description: 'MLGO: ML-guided register allocation (the AOT eviction model inside AOSP clang). ON by default.'
     required: false
     type: boolean
     default: true
   enable_afdo:
-    description: 'AutoFDO: profile-guided codegen from the AOSP profile shipped in the tree. ON by default; only applies where the tree carries a profile.'
+    description: 'AutoFDO: profile-guided codegen from the AOSP profile shipped in the tree. ON by default.'
     required: false
     type: boolean
     default: true
