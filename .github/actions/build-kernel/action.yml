@@ -27,7 +27,7 @@ inputs:
     type: string
     default: O2
   enable_mlgo:
-    description: 'MLGO: ML-guided register allocation (the AOT eviction model inside AOSP clang). ON by default; only applies on LTO=none, where regalloc runs at compile time.'
+    description: 'MLGO: ML-guided register allocation (the AOT eviction model inside AOSP clang). ON by default; goes in KCFLAGS on LTO=none, and to the linker via ld-wrapper otherwise, because regalloc then runs at link time.'
     required: false
     type: boolean
     default: true

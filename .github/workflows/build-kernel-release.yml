@@ -52,7 +52,7 @@ on:
         options: [O2, O3]
         default: O2
       enable_mlgo:
-        description: 'MLGO (ML-guided register allocation). ON by default; applies on LTO=none targets.'
+        description: 'MLGO (ML-guided register allocation). ON by default; compile-time flag on LTO=none targets, link-time flag on the rest.'
         required: false
         type: boolean
         default: true
