@@ -2438,18 +2438,20 @@ runs:
           echo "   MLGO regalloc advisor skipped on $OP_BRANCH"
         else
           MLGO_PROBE="${RUNNER_TEMP:-/tmp}/mlgo_probe.c"
+          MLGO_ERR="${RUNNER_TEMP:-/tmp}/mlgo_probe.err"
           # 16 live values on purpose: a trivial function gives the allocator no eviction
           # decision to make, so the release advisor is never consulted and the probe
           # passes on a clang that carries no model.
           printf '%s' 'long f(long*a){long s=0,b=1,c=2,d=3,e=4,g=5,h=6,i=7,j=8,k=9,l=10,m=11,n=12,o=13,p=14,q=15;for(int x=0;x<16;x++){s+=a[x]^b;b*=a[x]+c;c^=a[x]|d;d+=a[x]&e;e*=a[x]^g;g+=a[x]+h;h^=a[x]*i;i+=a[x]^j;j*=a[x]+k;k^=a[x]|l;l+=a[x]&m;m*=a[x]^n;n+=a[x]+o;o^=a[x]*p;p+=a[x]^q;q*=a[x]+s;}return s^b^c^d^e^g^h^i^j^k^l^m^n^o^p^q;}' > "$MLGO_PROBE"
           if [ "${{ env.OP_LTO}}" = none ]; then
-            if clang -O2 -mllvm -regalloc-enable-advisor=release --target=aarch64-linux-gnu -c "$MLGO_PROBE" -o /dev/null >/dev/null 2>&1; then
+            if clang -O2 -mllvm -regalloc-enable-advisor=release --target=aarch64-linux-gnu -c "$MLGO_PROBE" -o /dev/null >"$MLGO_ERR" 2>&1; then
               KCFLAGS_EXTRA="-mllvm -regalloc-enable-advisor=release ${KCFLAGS_EXTRA}"
               MLGO_ON=true
               MLGO_ROUTE=KCFLAGS
               echo "🧠 MLGO regalloc advisor enabled (compile time)"
             else
               echo "   MLGO regalloc advisor unavailable: this clang has no AOT regalloc-eviction model"
+              echo "::warning::MLGO compile probe declined on $CLANG_VERSION: $(tr '\n' ' ' < "$MLGO_ERR" | head -c 300)"
             fi
           else
             # Under LTO the compile step only emits bitcode and regalloc runs inside lld, in
@@ -2457,16 +2459,17 @@ runs:
             # 21 aarch64: -mllvm -regalloc=fast at compile time changed nothing (77 insns,
             # same as no flag), the same flag at link time changed everything (126). So it
             # goes to the linker via ld-wrapper, and the probe has to link too.
-            if clang --target=aarch64-linux-gnu -O2 -flto=thin -fuse-ld=lld -nostdlib -shared "$MLGO_PROBE" -o /dev/null -Wl,-mllvm=-regalloc-enable-advisor=release >/dev/null 2>&1; then
+            if clang --target=aarch64-linux-gnu -O2 -flto=thin -fuse-ld=lld -nostdlib -shared "$MLGO_PROBE" -o /dev/null -Wl,-mllvm=-regalloc-enable-advisor=release >"$MLGO_ERR" 2>&1; then
               export NMS_LD_MLLVM="-mllvm=-regalloc-enable-advisor=release"
               MLGO_ON=true
               MLGO_ROUTE=linker
               echo "🧠 MLGO regalloc advisor enabled (link time, LTO=${{ env.OP_LTO}})"
             else
               echo "   MLGO regalloc advisor unavailable at link time: this lld has no AOT regalloc-eviction model"
+              echo "::warning::MLGO link probe declined on $CLANG_VERSION: $(tr '\n' ' ' < "$MLGO_ERR" | head -c 300)"
             fi
           fi
-          rm -f "$MLGO_PROBE"
+          rm -f "$MLGO_PROBE" "$MLGO_ERR"
         fi
 
         AFDO_ON=false
