@@ -2343,7 +2343,7 @@ runs:
         set -u
         
         echo '#!/bin/bash' > "$COMMON_KERNEL_FOLDER/ld-wrapper"
-        echo 'ld.lld "$@" --thinlto-jobs=$(nproc --all)' >> "$COMMON_KERNEL_FOLDER/ld-wrapper"
+        echo 'ld.lld "$@" --thinlto-jobs=$(nproc --all) ${NMS_LD_MLLVM:-}' >> "$COMMON_KERNEL_FOLDER/ld-wrapper"
         chmod +x "$COMMON_KERNEL_FOLDER/ld-wrapper"
         
         KERNEL_BUILD_DATE=$(date -u)
@@ -2431,10 +2431,9 @@ runs:
         # Only `false` turns these off. An empty value means a caller that did not set the
         # input, and both are on by default, so it must not fail the build.
         MLGO_ON=false
+        MLGO_ROUTE=none
         if [ "${{ inputs.enable_mlgo }}" = false ]; then
           echo "   MLGO regalloc advisor off: enable_mlgo=false"
-        elif [ "${{ env.OP_LTO}}" != none ]; then
-          echo "   MLGO regalloc advisor not applicable on LTO=${{ env.OP_LTO}}: regalloc runs at link time"
         elif [ "$OP_BRANCH" = "wild/mt6993" ]; then
           echo "   MLGO regalloc advisor skipped on $OP_BRANCH"
         else
@@ -2443,12 +2442,29 @@ runs:
           # decision to make, so the release advisor is never consulted and the probe
           # passes on a clang that carries no model.
           printf '%s' 'long f(long*a){long s=0,b=1,c=2,d=3,e=4,g=5,h=6,i=7,j=8,k=9,l=10,m=11,n=12,o=13,p=14,q=15;for(int x=0;x<16;x++){s+=a[x]^b;b*=a[x]+c;c^=a[x]|d;d+=a[x]&e;e*=a[x]^g;g+=a[x]+h;h^=a[x]*i;i+=a[x]^j;j*=a[x]+k;k^=a[x]|l;l+=a[x]&m;m*=a[x]^n;n+=a[x]+o;o^=a[x]*p;p+=a[x]^q;q*=a[x]+s;}return s^b^c^d^e^g^h^i^j^k^l^m^n^o^p^q;}' > "$MLGO_PROBE"
-          if clang -O2 -mllvm -regalloc-enable-advisor=release --target=aarch64-linux-gnu -c "$MLGO_PROBE" -o /dev/null >/dev/null 2>&1; then
-            KCFLAGS_EXTRA="-mllvm -regalloc-enable-advisor=release ${KCFLAGS_EXTRA}"
-            MLGO_ON=true
-            echo "🧠 MLGO regalloc advisor enabled"
+          if [ "${{ env.OP_LTO}}" = none ]; then
+            if clang -O2 -mllvm -regalloc-enable-advisor=release --target=aarch64-linux-gnu -c "$MLGO_PROBE" -o /dev/null >/dev/null 2>&1; then
+              KCFLAGS_EXTRA="-mllvm -regalloc-enable-advisor=release ${KCFLAGS_EXTRA}"
+              MLGO_ON=true
+              MLGO_ROUTE=KCFLAGS
+              echo "🧠 MLGO regalloc advisor enabled (compile time)"
+            else
+              echo "   MLGO regalloc advisor unavailable: this clang has no AOT regalloc-eviction model"
+            fi
           else
-            echo "   MLGO regalloc advisor unavailable: this clang has no AOT regalloc-eviction model"
+            # Under LTO the compile step only emits bitcode and regalloc runs inside lld, in
+            # another process, so a compile-time -mllvm never reaches it. Measured on clang
+            # 21 aarch64: -mllvm -regalloc=fast at compile time changed nothing (77 insns,
+            # same as no flag), the same flag at link time changed everything (126). So it
+            # goes to the linker via ld-wrapper, and the probe has to link too.
+            if clang --target=aarch64-linux-gnu -O2 -flto=thin -fuse-ld=lld -nostdlib -shared "$MLGO_PROBE" -o /dev/null -Wl,-mllvm=-regalloc-enable-advisor=release >/dev/null 2>&1; then
+              export NMS_LD_MLLVM="-mllvm=-regalloc-enable-advisor=release"
+              MLGO_ON=true
+              MLGO_ROUTE=linker
+              echo "🧠 MLGO regalloc advisor enabled (link time, LTO=${{ env.OP_LTO}})"
+            else
+              echo "   MLGO regalloc advisor unavailable at link time: this lld has no AOT regalloc-eviction model"
+            fi
           fi
           rm -f "$MLGO_PROBE"
         fi
@@ -2562,7 +2578,7 @@ runs:
         echo "KCFLAGS: ${KCFLAGS:0:150}..."
         echo "KCPPFLAGS: ${KCPPFLAGS:0:150}..."
         if [ "$AFDO_ON" = true ]; then echo "AutoFDO: $AFDO_PROFILE"; else echo "AutoFDO: off"; fi
-        echo "MLGO: $MLGO_ON"
+        echo "MLGO: $MLGO_ON (route: $MLGO_ROUTE)"
         echo "Timestamp: $KBUILD_BUILD_TIMESTAMP"
         echo "Workspace: $WORKSPACE"
         
