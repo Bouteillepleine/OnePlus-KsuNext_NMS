@@ -1,6 +1,6 @@
 <div align="center">
 
-# OnePlus · KernelSU Next · NoMount · SuSfS
+# OnePlus · KernelSU Next · NoMount · SuSfS 2.4.0
 
 ### A custom OnePlus kernel + a **mountless** hiding add-on
 
