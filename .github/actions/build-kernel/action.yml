@@ -2478,7 +2478,18 @@ runs:
               echo "🧠 MLGO regalloc advisor enabled (compile time)"
             else
               echo "   MLGO regalloc advisor unavailable: this clang has no AOT regalloc-eviction model"
-              echo "::warning::MLGO compile probe declined on $CLANG_VERSION: $(tr '\n' ' ' < "$MLGO_ERR" | head -c 300)"
+              # A toolchain that predates the advisor rejects the flag outright, and
+              # that is a permanent, expected state for the older prebuilts -- 6 of the
+              # 82 A16 configs are on clang-r416183c (LLVM 12). Annotating it as a
+              # warning on every build of those devices just teaches you to scroll
+              # past warnings. Anything OTHER than "flag not recognised" means the
+              # advisor IS there and the probe failed for some other reason, which is
+              # worth stopping on.
+              if grep -q "Unknown command line argument" "$MLGO_ERR"; then
+                echo "   MLGO compile probe declined on $CLANG_VERSION: this toolchain predates the regalloc advisor (no annotation: expected, permanent)"
+              else
+                echo "::warning::MLGO compile probe declined on $CLANG_VERSION: $(tr '\n' ' ' < "$MLGO_ERR" | head -c 300)"
+              fi
             fi
           else
             # Under LTO the compile step only emits bitcode and regalloc runs inside lld, in
@@ -2493,7 +2504,18 @@ runs:
               echo "🧠 MLGO regalloc advisor enabled (link time, LTO=${{ env.OP_LTO}})"
             else
               echo "   MLGO regalloc advisor unavailable at link time: this lld has no AOT regalloc-eviction model"
-              echo "::warning::MLGO link probe declined on $CLANG_VERSION: $(tr '\n' ' ' < "$MLGO_ERR" | head -c 300)"
+              # A toolchain that predates the advisor rejects the flag outright, and
+              # that is a permanent, expected state for the older prebuilts -- 6 of the
+              # 82 A16 configs are on clang-r416183c (LLVM 12). Annotating it as a
+              # warning on every build of those devices just teaches you to scroll
+              # past warnings. Anything OTHER than "flag not recognised" means the
+              # advisor IS there and the probe failed for some other reason, which is
+              # worth stopping on.
+              if grep -q "Unknown command line argument" "$MLGO_ERR"; then
+                echo "   MLGO link probe declined on $CLANG_VERSION: this toolchain predates the regalloc advisor (no annotation: expected, permanent)"
+              else
+                echo "::warning::MLGO link probe declined on $CLANG_VERSION: $(tr '\n' ' ' < "$MLGO_ERR" | head -c 300)"
+              fi
             fi
           fi
           rm -f "$MLGO_PROBE" "$MLGO_ERR"
