@@ -42,6 +42,11 @@ at build time (the version is in the release notes and the build summary).
 The `susfs_ref` workflow input picks the susfs4ksu ref: `auto` follows the gki branch of each device,
 a 40-char SHA pins a release, empty builds without SUSFS. No `.ko` and no loader module ride along.
 
+**SUSFS versions this builder accepts:** `v1.5.8`, `v1.5.9`, `v1.5.10`, `v1.5.11`, `v1.5.12`, `v2.0.0`,
+`v2.1.0`, `v2.2.0`, `v2.3.0`, `v2.4.0`. Each one needs a KernelSU-Next fix set in [`kernel_patches/next/susfs_fix_patches`](https://github.com/Bouteillepleine/kernel_patches/tree/main/next/susfs_fix_patches).
+Anything else fails the build rather than producing a half-patched kernel, so if `auto`
+picks up a newer susfs before this repo catches up, pin `susfs_ref` to a known commit.
+
 ---
 
 ## Why NoMount
