@@ -2485,8 +2485,15 @@ runs:
               # past warnings. Anything OTHER than "flag not recognised" means the
               # advisor IS there and the probe failed for some other reason, which is
               # worth stopping on.
-              if grep -q "Unknown command line argument" "$MLGO_ERR"; then
-                echo "   MLGO compile probe declined on $CLANG_VERSION: this toolchain predates the regalloc advisor (no annotation: expected, permanent)"
+              # Two messages, both permanent and expected. clang 12 (r416183c, 6 configs)
+              # does not know the flag: "Unknown command line argument". Every other
+              # model-less toolchain knows it and has no AOT model linked in:
+              # "Requested regalloc eviction advisor analysis could be created" -- which is
+              # r450784e (13) + r487747c (33, its banner even says -mlgo) + ZyC (14) = 60 of
+              # 82 configs, measured 2026-11-08. Matching only the first string annotated
+              # those 60 on every build, which is the noise this guard exists to prevent.
+              if grep -qE "Unknown command line argument|regalloc eviction advisor analysis could" "$MLGO_ERR"; then
+                echo "   MLGO compile probe declined on $CLANG_VERSION: this toolchain carries no usable regalloc advisor (no annotation: expected, permanent)"
               else
                 echo "::warning::MLGO compile probe declined on $CLANG_VERSION: $(tr '\n' ' ' < "$MLGO_ERR" | head -c 300)"
               fi
@@ -2511,8 +2518,15 @@ runs:
               # past warnings. Anything OTHER than "flag not recognised" means the
               # advisor IS there and the probe failed for some other reason, which is
               # worth stopping on.
-              if grep -q "Unknown command line argument" "$MLGO_ERR"; then
-                echo "   MLGO link probe declined on $CLANG_VERSION: this toolchain predates the regalloc advisor (no annotation: expected, permanent)"
+              # Two messages, both permanent and expected. clang 12 (r416183c, 6 configs)
+              # does not know the flag: "Unknown command line argument". Every other
+              # model-less toolchain knows it and has no AOT model linked in:
+              # "Requested regalloc eviction advisor analysis could be created" -- which is
+              # r450784e (13) + r487747c (33, its banner even says -mlgo) + ZyC (14) = 60 of
+              # 82 configs, measured 2026-11-08. Matching only the first string annotated
+              # those 60 on every build, which is the noise this guard exists to prevent.
+              if grep -qE "Unknown command line argument|regalloc eviction advisor analysis could" "$MLGO_ERR"; then
+                echo "   MLGO link probe declined on $CLANG_VERSION: this toolchain carries no usable regalloc advisor (no annotation: expected, permanent)"
               else
                 echo "::warning::MLGO link probe declined on $CLANG_VERSION: $(tr '\n' ' ' < "$MLGO_ERR" | head -c 300)"
               fi
