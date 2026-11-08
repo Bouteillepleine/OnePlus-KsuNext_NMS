@@ -1174,14 +1174,41 @@ runs:
         echo "SUSVER=$SUSVER" >> "$GITHUB_ENV"
         echo "SusFS version: $SUSVER"
 
-        FIXDIR="$FIX_BASE/$SUSVER"
-        if [ ! -d "$FIXDIR" ]; then
-          echo "::error::No KernelSU-Next fix set for SUSFS $SUSVER in kernel_patches/next/susfs_fix_patches."
-          echo "::error::Present: $(ls "$FIX_BASE" | tr '\n' ' ')"
-          echo "::error::Build a $SUSVER fix set, or pin susfs_ref to a version that has one."
-          exit 1
+        # The fix set is keyed by SUSFS version, but susfs bumps SUSFS_VERSION on
+        # commits that change nothing this builder patches: v2.3.0 -> v2.4.0 moved
+        # only include/linux/susfs.h and ksu_module_susfs/module.prop, and still
+        # red-lined every KSUN target until a directory was copied by hand. So fall
+        # back to the newest fix set that is not NEWER than $SUSVER, and say so.
+        #
+        # Safe because this is not the last line of defence. A set that genuinely no
+        # longer fits still fails below: the per-reject fix_<base>.patch lookup, the
+        # -F0 patch calls, and the post-apply assertions (leftover .rej, missing
+        # ksu_handle_faccessat, raw close_fd, the hook Kbuild, SUSFS_POLICY coverage)
+        # all still have to pass. Dying here turned a version-string bump into a red
+        # matrix; it never caught a break those checks would have missed.
+        FIXSET="$SUSVER"
+        if [ ! -d "$FIX_BASE/$FIXSET" ]; then
+          FIXSET=""
+          # `|| true` so an empty grep does not trip pipefail.
+          cands="$(ls -1 "$FIX_BASE" 2>/dev/null | grep -xE 'v[0-9]+(\.[0-9]+)*' | sort -Vr || true)"
+          for cand in $cands; do
+            [ -d "$FIX_BASE/$cand" ] || continue
+            # cand <= SUSVER ?  awk, not `head -1`: sort|head can SIGPIPE under pipefail.
+            if [ "$(printf '%s\n%s\n' "$cand" "$SUSVER" | sort -V | awk 'NR==1')" = "$cand" ]; then
+              FIXSET="$cand"
+              break
+            fi
+          done
+          if [ -z "$FIXSET" ]; then
+            echo "::error::No KernelSU-Next fix set at or below SUSFS $SUSVER in kernel_patches/next/susfs_fix_patches."
+            echo "::error::Present: $(ls "$FIX_BASE" | tr '\n' ' ')"
+            echo "::error::Build a $SUSVER fix set, or pin susfs_ref to a version that has one."
+            exit 1
+          fi
+          echo "::warning::No KernelSU-Next fix set for SUSFS $SUSVER; falling back to $FIXSET, the newest at or below it. If this build fails below, $SUSVER moved something real and the set needs refreshing."
         fi
-        echo "fix set: next/susfs_fix_patches/$SUSVER (kernel_patches@${{ inputs.patches_ref || 'main' }})"
+        FIXDIR="$FIX_BASE/$FIXSET"
+        echo "fix set: next/susfs_fix_patches/$FIXSET (kernel_patches@${{ inputs.patches_ref || 'main' }})"
 
         # ---- KernelSU-Next side -------------------------------------------
         cd "$KSU_FOLDER"
@@ -1198,7 +1225,7 @@ runs:
           base="$(basename "$rej" .rej)"
           fix="$FIXDIR/fix_$base.patch"
           if [ ! -f "$fix" ]; then
-            echo "::error::$base was rejected and fix_$base.patch is not in the $SUSVER fix set."
+            echo "::error::$base was rejected and fix_$base.patch is not in the $FIXSET fix set."
             echo "::error::KernelSU-Next moved under SUSFS $SUSVER; refresh the fix set before building."
             exit 1
           fi
