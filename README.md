@@ -34,7 +34,7 @@ Every release contains two things. Flash the kernel first, then add NoMount Suit
 > [!IMPORTANT]
 > **The kernel on its own does nothing visible.** NoMount is *compiled in* but stays **dormant** until the **NoMount Suite** module activates it. NoMount Suite is the part that carries your injection rules, the WebUI, and the spoofing. Think of it like a Magisk/KSU module. **You need both.**
 
-## SUSFS
+## SUSFS (v2.4.0)
 
 Every kernel has **SUSFS** compiled in, patched from [simonpunk/susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu)
 at build time (the version is in the release notes and the build summary).
@@ -42,10 +42,10 @@ at build time (the version is in the release notes and the build summary).
 The `susfs_ref` workflow input picks the susfs4ksu ref: `auto` follows the gki branch of each device,
 a 40-char SHA pins a release, empty builds without SUSFS. No `.ko` and no loader module ride along.
 
-**SUSFS versions this builder accepts:** `v1.5.8`, `v1.5.9`, `v1.5.10`, `v1.5.11`, `v1.5.12`, `v2.0.0`,
-`v2.1.0`, `v2.2.0`, `v2.3.0`, `v2.4.0`. Each one needs a KernelSU-Next fix set in [`kernel_patches/next/susfs_fix_patches`](https://github.com/Bouteillepleine/kernel_patches/tree/main/next/susfs_fix_patches).
-Anything else fails the build rather than producing a half-patched kernel, so if `auto`
-picks up a newer susfs before this repo catches up, pin `susfs_ref` to a known commit.
+Every SUSFS release from `v1.5.8` to `v2.4.0` is accepted — each has a fix set in
+[`kernel_patches/next/susfs_fix_patches`](https://github.com/Bouteillepleine/kernel_patches/tree/main/next/susfs_fix_patches).
+A newer one fails the build rather than producing a half-patched kernel, so pin `susfs_ref`
+if `auto` moves ahead of this repo.
 
 ---
 
