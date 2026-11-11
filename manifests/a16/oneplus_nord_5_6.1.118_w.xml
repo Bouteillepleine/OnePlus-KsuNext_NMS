@@ -5,10 +5,10 @@
   <remote fetch="https://github.com/Bouteillepleine" name="Bouteillepleine"/>
   <project remote="Bouteillepleine" name="AnyKernel3" path="AnyKernel3" revision="suite"/>
   <default remote="clo-la" revision="dummy_revision" sync-c="true" sync-tags="false"/>
-  <project remote="origin" name="android_kernel_common_oneplus_sm8635" path="kernel_platform/common" revision="fbeaa9ff25bef199618b9e47004f2eb8fe135f9f">
+  <project remote="origin" name="android_kernel_common_oneplus_sm8635" path="kernel_platform/common" revision="fbeaa9ff25bef199618b9e47004f2eb8fe135f9f" upstream="refs/heads/oneplus/sm8635_b_16.0.0_nord_5">
     <linkfile dest="kernel_platform/.source_date_epoch_dir" src="."/>
   </project>
-  <project remote="origin" name="android_kernel_modules_and_devicetree_oneplus_sm8635" path="./" revision="03a042946ed3ce35928fee13cd88c4c90a90ddd2"/>
+  <project remote="origin" name="android_kernel_modules_and_devicetree_oneplus_sm8635" path="./" revision="03a042946ed3ce35928fee13cd88c4c90a90ddd2" upstream="refs/heads/oneplus/sm8635_b_16.0.0_nord_5"/>
   <project remote="clo-la" name="kernel/prebuilts/build-tools" path="kernel_platform/prebuilts/kernel-build-tools" revision="d153b7ab4a4956198957e258d4f370e875c53059" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel">
     <linkfile dest="kernel_platform/build/prebuilts/kernel-build-tools" src="."/>
   </project>

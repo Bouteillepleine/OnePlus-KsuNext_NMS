@@ -5,10 +5,10 @@
   <remote fetch="https://github.com/OnePlusOSS" name="origin"/>
   <remote fetch="https://github.com/Bouteillepleine" name="Bouteillepleine"/>
   <project remote="Bouteillepleine" name="AnyKernel3" path="AnyKernel3" revision="suite"/>
-  <project remote="origin" name="android_kernel_oneplus_mt6897" path="kernel-6.1" revision="d80dce1534ca0b0509ef1b1f63725570763672a5">
+  <project remote="origin" name="android_kernel_oneplus_mt6897" path="kernel-6.1" revision="d80dce1534ca0b0509ef1b1f63725570763672a5" upstream="refs/heads/oneplus/mt6897_b_16.0.0_nord_ce5">
     <linkfile dest="kernel_platform/common" src="."/>
   </project>
-  <project remote="origin" name="android_kernel_modules_and_devicetree_oneplus_mt6897" path="./" revision="50ab2c5bc6b92e2cd268aa70760f7ac7e0094362"/>
+  <project remote="origin" name="android_kernel_modules_and_devicetree_oneplus_mt6897" path="./" revision="50ab2c5bc6b92e2cd268aa70760f7ac7e0094362" upstream="refs/heads/oneplus/mt6897_b_16.0.0_nord_ce5"/>
    <project remote="clo-la" name="kernel/prebuilts/build-tools" path="kernel_platform/prebuilts/kernel-build-tools" revision="d153b7ab4a4956198957e258d4f370e875c53059" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1">
     <linkfile dest="kernel_platform/build/prebuilts/kernel-build-tools" src="."/>
   </project>

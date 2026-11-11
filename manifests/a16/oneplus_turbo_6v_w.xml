@@ -5,10 +5,10 @@
   <remote fetch="https://github.com/OnePlusOSS" name="origin"/>
   <remote fetch="https://github.com/Bouteillepleine" name="Bouteillepleine"/>
   <project remote="Bouteillepleine" name="AnyKernel3" path="AnyKernel3" revision="suite"/>
-  <project remote="origin" name="android_kernel_common_oneplus_sm7635" path="kernel_platform/common" revision="e2601ea9608f2b1302a662f43ebc3e3df95a705f">
+  <project remote="origin" name="android_kernel_common_oneplus_sm7635" path="kernel_platform/common" revision="e2601ea9608f2b1302a662f43ebc3e3df95a705f" upstream="refs/heads/oneplus/sm7635_b_16.0.0_turbo_6v">
     <linkfile dest="kernel_platform/.source_date_epoch_dir" src="."/>
   </project>
-  <project remote="origin" name="android_kernel_modules_and_devicetree_oneplus_sm7635" path="./" revision="6315e8b1c9c17d9e614125867a9eab2185a68fc2"/>
+  <project remote="origin" name="android_kernel_modules_and_devicetree_oneplus_sm7635" path="./" revision="6315e8b1c9c17d9e614125867a9eab2185a68fc2" upstream="refs/heads/oneplus/sm7635_b_16.0.0_turbo_6v"/>
   <project remote="clo-la" name="kernel/prebuilts/build-tools" path="kernel_platform/prebuilts/kernel-build-tools" revision="d153b7ab4a4956198957e258d4f370e875c53059" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel">
     <linkfile dest="kernel_platform/build/prebuilts/kernel-build-tools" src="."/>
   </project>

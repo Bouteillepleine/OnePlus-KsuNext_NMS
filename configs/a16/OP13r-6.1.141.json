@@ -1,8 +1,8 @@
 {
-  "model": "OP13r-6.1.157",
+  "model": "OP13r-6.1.141",
   "soc": "pineapple",
   "branch": "wild/sm8650",
-  "manifest": "oneplus_13r_6.1.157_w.xml",
+  "manifest": "oneplus_13r_6.1.141_w.xml",
   "android_version": "android14",
   "kernel_version": "6.1",
   "os_version": "A16",
