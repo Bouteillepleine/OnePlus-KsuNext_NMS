@@ -328,6 +328,22 @@ jobs:
           echo -e "$FINAL_LOG" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
+      # Drift of OUR pins, not upstream's branches. The scanner above already
+      # resolved every branch head into $STATE_FILE; this only asks whether what
+      # we build still matches one, so a settled fleet costs zero API calls.
+      - name: Check manifest pins
+        id: pins
+        run: |
+          set -uo pipefail
+          python3 -I main/.github/scripts/check_manifest_pins.py \
+            main/configs/a16 main/manifests/a16 "main/$STATE_FILE" > /tmp/pin_report.md || true
+          cat /tmp/pin_report.md
+          {
+            echo "pin_report<<PINEOF"
+            cat /tmp/pin_report.md
+            echo "PINEOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Manage Notification Issue
         if: steps.scanner.outputs.changes_found == 'true'
         run: |
@@ -343,10 +359,10 @@ jobs:
           fi
           
           if [ -z "$ISSUE_NUMBER" ]; then
-            BODY=$(printf "Hi $TARGET,\n\nTracker for today.\n\n${{ steps.scanner.outputs.log_content }}\n\n---\n🔗 [View Action Summary]($RUN_URL)")
+            BODY=$(printf "Hi $TARGET,\n\nTracker for today.\n\n${{ steps.scanner.outputs.log_content }}\n${{ steps.pins.outputs.pin_report }}\n\n---\n🔗 [View Action Summary]($RUN_URL)")
             gh issue create --repo ${{ github.repository }} --title "$DATE_TITLE" --body "$BODY" --label "notification"
           else
-            BODY=$(printf "### 🔄 New Activity Detected ($(date -u +'%H:%M') UTC)\n\n${{ steps.scanner.outputs.log_content }}\n\n---\n🔗 [View Action Summary]($RUN_URL)")
+            BODY=$(printf "### 🔄 New Activity Detected ($(date -u +'%H:%M') UTC)\n\n${{ steps.scanner.outputs.log_content }}\n${{ steps.pins.outputs.pin_report }}\n\n---\n🔗 [View Action Summary]($RUN_URL)")
             gh issue comment $ISSUE_NUMBER --repo ${{ github.repository }} --body "$BODY"
           fi
 
