@@ -2590,13 +2590,25 @@ runs:
           scripts/config --file "$OUT/.config" -d "$sym" 2>/dev/null || true
         done
 
+        make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" O="$OUT" olddefconfig
+
+        # AFTER olddefconfig, not before. drivers/nfc/oplus_nfc calls get_project()
+        # and get_Operator_Version(), which live in the vendor modules tree and build
+        # as modules -- so the moment this driver lands in vmlinux the link dies with
+        # "undefined symbol: get_project". OnePlus flipped its Kconfig from `default n`
+        # to `default y` in the mt6835 5.15.197 sync, and gki_defconfig says nothing
+        # about the symbol, so olddefconfig turns it back on. The disable used to sit
+        # above that line and was therefore a no-op the day the default changed -- a
+        # guard that stopped working without failing. Asserted, for the same reason.
         case "$OP_MODEL" in
-          OP-N6X|OP-N6X-*)
+          OP-N6|OP-N6-*|OP-N6X|OP-N6X-*)
             scripts/config --file "$OUT/.config" -d OPLUS_NFC
+            if grep -qxE 'CONFIG_OPLUS_NFC=(y|m)' "$OUT/.config"; then
+              echo "::error::OPLUS_NFC survived the disable; it links against get_project from the modules tree and will fail at vmlinux"
+              exit 1
+            fi
             ;;
         esac
-
-        make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" O="$OUT" olddefconfig
 
         for sym in CONFIG_SECCOMP CONFIG_SECCOMP_FILTER; do
           grep -qx "${sym}=y" "$OUT/.config" \
