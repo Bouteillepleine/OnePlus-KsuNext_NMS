@@ -1,8 +1,8 @@
 {
-  "model": "OP15",
+  "model": "OP15-6.12.23",
   "soc": "canoe",
   "branch": "wild/sm8850",
-  "manifest": "oneplus_15_w.xml",
+  "manifest": "oneplus_15_6.12.23_w.xml",
   "android_version": "android16",
   "kernel_version": "6.12",
   "os_version": "A16",
