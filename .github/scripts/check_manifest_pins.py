@@ -29,6 +29,14 @@ Two outcomes, deliberately weighted differently:
     green build; only this can.
 
 Only drifted pins cost an API call, to read SUBLEVEL at the pinned SHA.
+
+BRANCH pins are the other half. A manifest that pins `oneplus/<branch>` floats by
+design, so there is no SHA to compare and nothing here could see it move -- which is
+exactly how OP15 silently changed kernel from 6.12.23 to 6.12.58 on 2026-11-11 while
+its banner still said 6.12.23. branch_pins.tsv records what each branch pin floats AT;
+a row that no longer matches the branch head is reported with the same two weights.
+⚠ The monitor does not scan `*modules*` repos, so only the kernel half of each
+manifest has state to compare. Modules-tree drift is still invisible here.
 """
 
 import glob
@@ -39,6 +47,10 @@ import subprocess
 import sys
 
 PINNED_IN_NAME = re.compile(r"_(\d+\.\d+\.\d+)_")
+
+BRANCH_PROJECT = re.compile(
+    r'name="(android_kernel[a-z0-9_.]*oneplus_[a-z0-9]+)"[^>]*revision="(oneplus/[^"]+)"'
+)
 
 PROJECT = re.compile(
     r'name="(android_kernel[a-z0-9_.]*oneplus_[a-z0-9]+)"[^>]*'
@@ -87,12 +99,37 @@ def main():
         if d.get("NMS") and d.get("manifest"):
             wanted.add(d["manifest"])
 
-    moved, churn, unpinned = [], [], []
+    expectations = {}
+    tsv = os.path.join(os.path.dirname(os.path.abspath(__file__)), "branch_pins.tsv")
+    try:
+        for line in open(tsv, encoding="utf-8"):
+            if line.startswith("#") or not line.strip():
+                continue
+            man, repo, br, kv, sha = line.rstrip("\n").split("\t")
+            expectations[(man, repo, br)] = (kv, sha)
+    except Exception as e:
+        print("::warning::branch pin table unreadable (%s); branch pins unchecked" % e)
+
+    moved, churn, unpinned, bmoved, bchurn = [], [], [], [], []
     for p in sorted(glob.glob(os.path.join(man_dir, "*.xml"))):
         name = os.path.basename(p)
         if name not in wanted:
             continue
         s = open(p, encoding="utf-8", errors="replace").read()
+        for repo, br in BRANCH_PROJECT.findall(s):
+            exp = expectations.get((name, repo, br))
+            if not exp:
+                continue
+            entry = state.get(repo, {}).get(br)
+            if not entry:
+                continue
+            tip_sha, _, tip_kv = entry.partition("|")
+            exp_kv, exp_sha = exp
+            if exp_kv != "-" and tip_kv != exp_kv:
+                bmoved.append((name, repo, exp_kv, tip_kv, br))
+            elif tip_sha != exp_sha:
+                bchurn.append((name, repo, exp_sha[:10], tip_sha[:10], br))
+
         hits = [(m.group(1), m.group(2), m.group(3)) for m in PROJECT.finditer(s)]
         hits += [(m.group(1), m.group(3), m.group(2)) for m in PROJECT_ALT.finditer(s)]
         if not hits:
@@ -133,6 +170,21 @@ def main():
         for n, repo, s, pk, t, tk, b in churn:
             out.append("| `%s` | `%s` | `%s` | `%s` |\n" % (n, s, t, b))
         out.append("\n")
+    if bmoved:
+        out.append("### \u26a0\ufe0f Branch pins: the branch moved to a NEW SUBLEVEL\n")
+        out.append("| Manifest | Was | Now | Branch |\n| :--- | :--- | :--- | :--- |\n")
+        for n, repo, ek, tk, b in bmoved:
+            out.append("| `%s` | %s | **%s** | `%s` |\n" % (n, ek, tk, b))
+        out.append("\nThese manifests float: nothing pinned them, so the build silently "
+                   "follows. The config's `uname` still claims the old kernel. Either pin "
+                   "the SHA or re-record the row in `branch_pins.tsv` once the move is "
+                   "deliberate.\n\n")
+    if bchurn:
+        out.append("### \U0001f504 Branch pins advanced (same sublevel)\n")
+        out.append("| Manifest | Was | Now | Branch |\n| :--- | :--- | :--- | :--- |\n")
+        for n, repo, es, ts, b in bchurn:
+            out.append("| `%s` | `%s` | `%s` | `%s` |\n" % (n, es, ts, b))
+        out.append("\n")
     if unpinned:
         out.append("### ℹ️ Manifests with a SHA pin and no `upstream=`, so drift cannot be checked\n")
         out.append("".join("- `%s`\n" % n for n in unpinned) + "\n")
@@ -144,8 +196,9 @@ def main():
     if summary and body:
         with open(summary, "a") as fh:
             fh.write("\n" + body)
-    print("pin check: %d sublevel move(s), %d same-sublevel drift(s), %d unpinned"
-          % (len(moved), len(churn), len(unpinned)), file=sys.stderr)
+    print("pin check: %d sublevel move(s), %d same-sublevel drift(s), %d unpinned; "
+          "branch pins: %d sublevel move(s), %d advanced"
+          % (len(moved), len(churn), len(unpinned), len(bmoved), len(bchurn)), file=sys.stderr)
     return 0
 
 
