@@ -88,8 +88,13 @@ jobs:
           echo "### 📓 Kernel Manifests Report" > ../manifest_summary.md
           echo "### 🛠 Kernel Trees Report" > ../local_summary.md
           
-          # Auto filter repos: Ignore Repos not related to android_kernel and ignore android_kernel_modules or any modules or techpack
-          REPOS=$(gh repo list $ORG --limit 1000 --json name --jq '.[] | select((.name | startswith("android_kernel_") or . == "kernel_manifest") and (.name | contains("modules") or contains("techpack") | not)) | .name')
+          # Auto filter repos: keep android_kernel_* plus kernel_manifest, drop techpack.
+          # modules/devicetree repos are INCLUDED on purpose: a manifest pins one
+          # per device, and until they were scanned their branch pins could move
+          # with nothing to notice -- which is how the OP15 .58 module set landed
+          # in .69/.81 builds on 2026-11-11. They have no Makefile, so KERNEL reads
+          # N/A and check_manifest_pins.py compares them by SHA alone.
+          REPOS=$(gh repo list $ORG --limit 1000 --json name --jq '.[] | select((.name | startswith("android_kernel_") or . == "kernel_manifest") and (.name | contains("techpack") | not)) | .name')
           
           echo "🔍 Found $(echo "$REPOS" | wc -w) repositories to scan."
           

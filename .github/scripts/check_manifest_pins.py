@@ -35,8 +35,12 @@ design, so there is no SHA to compare and nothing here could see it move -- whic
 exactly how OP15 silently changed kernel from 6.12.23 to 6.12.58 on 2026-11-11 while
 its banner still said 6.12.23. branch_pins.tsv records what each branch pin floats AT;
 a row that no longer matches the branch head is reported with the same two weights.
-⚠ The monitor does not scan `*modules*` repos, so only the kernel half of each
-manifest has state to compare. Modules-tree drift is still invisible here.
+The monitor scans modules/devicetree repos too, so both halves of a manifest are
+covered. A modules repo has no Makefile, so its recorded kernel column is `-` and
+only its SHA is compared -- any movement is reported, which is the right weight for
+a tree whose version we cannot read.
+⚠ Rows for modules repos stay inert until the monitor has run once with them in
+scope; a branch with no state entry is skipped, not guessed at.
 """
 
 import glob
