@@ -2282,6 +2282,27 @@ runs:
           ;;
         esac
 
+        # BORE 7.0.x on 6.12 ships two transforms outside the patch, because their
+        # context splits across the OnePlus trees: 6 of the 11 carry GKI's
+        # run-to-parity rework (__pick_eevdf(cfs_rq, bool protect) and a
+        # set_protect_slice() that reads the base slice) and 5 do not. One patch
+        # cannot match both, so kernel_patches ships scripts/bore_612_surgery.py.
+        # Gate on the script being present AND a 7.0.x-only symbol in the tree, so
+        # a patches_ref still carrying BORE 5.9.6 is left alone.
+        SURGERY="$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/bore_612_surgery.py"
+        if [ "${KERNEL_VER}" = "6.12" ] && [ -f "$SURGERY" ] \
+           && grep -q 'sched_burst_protect_slice_cond_key' "$COMMON_KERNEL_FOLDER/kernel/sched/bore.c" 2>/dev/null; then
+          cd "$COMMON_KERNEL_FOLDER"
+          python3 -I "$SURGERY" || { echo "::error::BORE 6.12 surgery failed"; exit 1; }
+          # The surgery is idempotent, so the set_protect_slice sed above having
+          # already run is fine and reported as such.
+          VERIFY="$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/verify_bore_612.py"
+          if [ -f "$VERIFY" ]; then
+            python3 -I "$VERIFY" "$COMMON_KERNEL_FOLDER" \
+              || { echo "::error::BORE hook placement verification failed"; exit 1; }
+          fi
+        fi
+
         DEFCONFIG="$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
         if ! grep -q "^CONFIG_SCHED_BORE=" "$DEFCONFIG"; then
           echo "CONFIG_SCHED_BORE=y" >> "$DEFCONFIG"
