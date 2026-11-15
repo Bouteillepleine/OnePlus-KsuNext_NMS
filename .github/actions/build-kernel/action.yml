@@ -1174,41 +1174,68 @@ runs:
         echo "SUSVER=$SUSVER" >> "$GITHUB_ENV"
         echo "SusFS version: $SUSVER"
 
-        # The fix set is keyed by SUSFS version, but susfs bumps SUSFS_VERSION on
-        # commits that change nothing this builder patches: v2.3.0 -> v2.4.0 moved
-        # only include/linux/susfs.h and ksu_module_susfs/module.prop, and still
-        # red-lined every KSUN target until a directory was copied by hand. So fall
-        # back to the newest fix set that is not NEWER than $SUSVER, and say so.
-        #
-        # Safe because this is not the last line of defence. A set that genuinely no
-        # longer fits still fails below: the per-reject fix_<base>.patch lookup, the
-        # -F0 patch calls, and the post-apply assertions (leftover .rej, missing
-        # ksu_handle_faccessat, raw close_fd, the hook Kbuild, SUSFS_POLICY coverage)
-        # all still have to pass. Dying here turned a version-string bump into a red
-        # matrix; it never caught a break those checks would have missed.
-        FIXSET="$SUSVER"
-        if [ ! -d "$FIX_BASE/$FIXSET" ]; then
-          FIXSET=""
-          # `|| true` so an empty grep does not trip pipefail.
-          cands="$(ls -1 "$FIX_BASE" 2>/dev/null | grep -xE 'v[0-9]+(\.[0-9]+)*' | sort -Vr || true)"
-          for cand in $cands; do
-            [ -d "$FIX_BASE/$cand" ] || continue
-            # cand <= SUSVER ?  awk, not `head -1`: sort|head can SIGPIPE under pipefail.
-            if [ "$(printf '%s\n%s\n' "$cand" "$SUSVER" | sort -V | awk 'NR==1')" = "$cand" ]; then
-              FIXSET="$cand"
-              break
-            fi
-          done
-          if [ -z "$FIXSET" ]; then
-            echo "::error::No KernelSU-Next fix set at or below SUSFS $SUSVER in kernel_patches/next/susfs_fix_patches."
-            echo "::error::Present: $(ls "$FIX_BASE" | tr '\n' ' ')"
-            echo "::error::Build a $SUSVER fix set, or pin susfs_ref to a version that has one."
-            exit 1
+        # The fix set is keyed first by the enable patch it was built against, and
+        # only then by SUSFS version. susfs 9b0b13f rewrote
+        # kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch by 1315 lines and
+        # left SUSFS_VERSION on v2.4.0, so the version key selected a set built for
+        # a different patch and fix_selinux_hide.c.patch died mid-run on "Reversed
+        # (or previously applied)". A set declares the sums it fits in
+        # enable_patch.sha256; a declared match wins over any version match.
+        ENABLE_SHA="$(sha256sum "$SUSFS_KP/KernelSU/10_enable_susfs_for_ksu.patch" | awk '{print $1}')"
+        echo "enable patch sha256: $ENABLE_SHA"
+        FIXSET=""
+        for cand in $(ls -1 "$FIX_BASE" 2>/dev/null | sort -Vr || true); do
+          [ -f "$FIX_BASE/$cand/enable_patch.sha256" ] || continue
+          if awk '{print $1}' "$FIX_BASE/$cand/enable_patch.sha256" | grep -qxF "$ENABLE_SHA"; then
+            FIXSET="$cand"
+            echo "fix set $cand declares this enable patch"
+            break
           fi
-          echo "::warning::No KernelSU-Next fix set for SUSFS $SUSVER; falling back to $FIXSET, the newest at or below it. If this build fails below, $SUSVER moved something real and the set needs refreshing."
+        done
+        if [ -z "$FIXSET" ] && ls -1 "$FIX_BASE"/*/enable_patch.sha256 >/dev/null 2>&1; then
+          echo "::warning::No fix set declares enable-patch sha256 $ENABLE_SHA; susfs regenerated the enable patch without moving SUSFS_VERSION ($SUSVER). Falling back to the version key. If the patch run below dies on a reversed patch, refresh the set and declare the sum: echo '$ENABLE_SHA  # susfs <ref>' >> next/susfs_fix_patches/<set>/enable_patch.sha256"
         fi
-        FIXDIR="$FIX_BASE/$FIXSET"
-        echo "fix set: next/susfs_fix_patches/$FIXSET (kernel_patches@${{ inputs.patches_ref || 'main' }})"
+        if [ -n "$FIXSET" ]; then
+          FIXDIR="$FIX_BASE/$FIXSET"
+          echo "fix set: next/susfs_fix_patches/$FIXSET (kernel_patches@${{ inputs.patches_ref || 'main' }})"
+        else
+          # The version fallback below stays for a susfs_ref pinned to a release whose
+          # enable patch no set has declared yet; susfs bumps SUSFS_VERSION on
+          # commits that change nothing this builder patches: v2.3.0 -> v2.4.0 moved
+          # only include/linux/susfs.h and ksu_module_susfs/module.prop, and still
+          # red-lined every KSUN target until a directory was copied by hand. So fall
+          # back to the newest fix set that is not NEWER than $SUSVER, and say so.
+          #
+          # Safe because this is not the last line of defence. A set that genuinely no
+          # longer fits still fails below: the per-reject fix_<base>.patch lookup, the
+          # -F0 patch calls, and the post-apply assertions (leftover .rej, missing
+          # ksu_handle_faccessat, raw close_fd, the hook Kbuild, SUSFS_POLICY coverage)
+          # all still have to pass. Dying here turned a version-string bump into a red
+          # matrix; it never caught a break those checks would have missed.
+          FIXSET="$SUSVER"
+          if [ ! -d "$FIX_BASE/$FIXSET" ]; then
+            FIXSET=""
+            # `|| true` so an empty grep does not trip pipefail.
+            cands="$(ls -1 "$FIX_BASE" 2>/dev/null | grep -xE 'v[0-9]+(\.[0-9]+)*' | sort -Vr || true)"
+            for cand in $cands; do
+              [ -d "$FIX_BASE/$cand" ] || continue
+              # cand <= SUSVER ?  awk, not `head -1`: sort|head can SIGPIPE under pipefail.
+              if [ "$(printf '%s\n%s\n' "$cand" "$SUSVER" | sort -V | awk 'NR==1')" = "$cand" ]; then
+                FIXSET="$cand"
+                break
+              fi
+            done
+            if [ -z "$FIXSET" ]; then
+              echo "::error::No KernelSU-Next fix set at or below SUSFS $SUSVER in kernel_patches/next/susfs_fix_patches."
+              echo "::error::Present: $(ls "$FIX_BASE" | tr '\n' ' ')"
+              echo "::error::Build a $SUSVER fix set, or pin susfs_ref to a version that has one."
+              exit 1
+            fi
+            echo "::warning::No KernelSU-Next fix set for SUSFS $SUSVER; falling back to $FIXSET, the newest at or below it. If this build fails below, $SUSVER moved something real and the set needs refreshing."
+          fi
+          FIXDIR="$FIX_BASE/$FIXSET"
+          echo "fix set: next/susfs_fix_patches/$FIXSET (kernel_patches@${{ inputs.patches_ref || 'main' }})"
+        fi
 
         # ---- KernelSU-Next side -------------------------------------------
         cd "$KSU_FOLDER"
@@ -1230,7 +1257,20 @@ runs:
             exit 1
           fi
           echo "-- fix_$base.patch"
-          patch -p1 --forward -F0 < "$fix"
+          # `patch --forward` exits 1 on an already-applied patch as well as on a
+          # real reject, and it skips every hunk in the file either way -- which is
+          # how one already-applied hunk drops the hunks that still matter. Name the
+          # case rather than let set -e print a bare patch log and nothing else.
+          if ! out="$(patch -p1 --forward -F0 < "$fix" 2>&1)"; then
+            echo "$out"
+            if printf '%s' "$out" | grep -q 'Reversed (or previously applied)'; then
+              echo "::error::fix_$base.patch is already applied -- susfs now does this itself."
+              echo "::error::The enable patch changed (sha256 $ENABLE_SHA) and fix set $FIXSET no longer fits."
+              echo "::error::Refresh the set, then declare the sum: echo '$ENABLE_SHA  # susfs <ref>' >> next/susfs_fix_patches/<set>/enable_patch.sha256"
+            fi
+            exit 1
+          fi
+          echo "$out"
           rm -f "$rej"
         done
 
