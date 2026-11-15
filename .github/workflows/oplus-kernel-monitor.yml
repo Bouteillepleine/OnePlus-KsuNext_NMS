@@ -160,8 +160,16 @@ jobs:
             
             RETRY_COUNT=0; MAX_RETRIES=3; BRANCH_DATA=""
             until [ $RETRY_COUNT -ge $MAX_RETRIES ]; do
-              BRANCH_DATA=$(gh api graphql -f query="$ACTIVE_QUERY" -f owner="$ORG" -f name="$repo" --jq '.data.repository.refs.nodes[]' 2>/dev/null)
-              [ $? -eq 0 ] && [ -n "$BRANCH_DATA" ] && break
+              # A repo with no Makefile -- every modules/devicetree tree -- makes
+              # GraphQL answer file(path:) with an errors entry rather than a null.
+              # gh exits 1 on any errors entry and then prints the raw body,
+              # ignoring --jq: under set -e that killed the step here, before the
+              # retry below could print, and || true alone would have fed the raw
+              # body into the row loop. Take the response whole and pull the nodes
+              # out with jq, which reads a partial response (data AND errors) fine.
+              RAW=$(gh api graphql -f query="$ACTIVE_QUERY" -f owner="$ORG" -f name="$repo" 2>/dev/null || true)
+              BRANCH_DATA=$(printf '%s' "$RAW" | jq -c '.data.repository.refs.nodes[]?' 2>/dev/null || true)
+              [ -n "$BRANCH_DATA" ] && break
               RETRY_COUNT=$((RETRY_COUNT + 1))
               echo "⚠️ API failed for $repo. Retry $RETRY_COUNT/$MAX_RETRIES..."
               sleep 5
