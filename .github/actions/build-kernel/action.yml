@@ -1247,10 +1247,16 @@ runs:
         # "Hunk #N FAILED" naming neither cause (run 43742890550: pinned KSUN
         # a1289e4b lacked ksu_selinux_hide_keep_backup, which the v2.4.0-9b0b13f set
         # expects to delete, so fix_selinux_hide.c.patch died at hunk 1).
-        # ksun_files.sha256 records the PRISTINE sum of every file the set patches.
-        # Compared here, before the enable patch rewrites them. A mismatch is only a
-        # warning: most KSUN commits touch none of these, and a set often still fits
-        # a file that moved. It is quoted back if a fix patch actually fails.
+        # ksun_files.sha256 records the sum of every file the set patches, taken AT
+        # THIS POINT -- i.e. KernelSU-Next as the builder has it, after the NoMount
+        # _hook/cloak stack (which rewrites kernel/Kbuild and feature/selinux_hide.c
+        # via git apply, printing no "patching file" line) and after the apk-scan
+        # fix. NOT a pristine `git clone`: baselining from upstream makes this warn
+        # on every build, which is worse than no check. That is the right key anyway
+        # -- what decides whether the fix patches apply is the tree the enable patch
+        # actually sees. Regenerate with the block this prints on mismatch.
+        # A mismatch is only a warning: a set often still fits a file that moved. It
+        # is quoted back if a fix patch actually fails.
         KSUN_DRIFT=""
         KSUN_BASE="$FIXDIR/ksun_files.sha256"
         if [ -f "$KSUN_BASE" ]; then
@@ -1263,11 +1269,19 @@ runs:
           done < "$KSUN_BASE"
           if [ -n "$KSUN_DRIFT" ]; then
             echo "::warning::fix set $FIXSET was built against different KernelSU-Next content for:$KSUN_DRIFT (KSU ${KSU_COMMIT_SHA:-unknown}). Harmless unless the matching fix patch fails below."
+            # Print the live sums so the baseline can be refreshed from a real run
+            # instead of guessed from upstream -- see the note above.
+            echo "-- current sums, to refresh next/susfs_fix_patches/$FIXSET/ksun_files.sha256:"
+            awk '{print $2}' "$KSUN_BASE" | grep -v '^$' | while read -r p; do
+              [ -f "$p" ] && sha256sum "$p" | sed 's/^/     /'
+            done
           else
             echo "-- KernelSU-Next baseline matches fix set $FIXSET ($(grep -cv '^#' "$KSUN_BASE") files)"
           fi
         else
-          echo "::warning::fix set $FIXSET has no ksun_files.sha256; a KernelSU-Next-side mismatch will not be named. Generate it from a pristine KSUN checkout."
+          # Informational, not a warning: the older sets (v1.5.8 .. v2.3.0) have no
+          # baseline and never will, and warning on each would be noise on every build.
+          echo "-- fix set $FIXSET has no ksun_files.sha256; KernelSU-Next-side drift will not be named"
         fi
 
         patch -p1 --forward < "$SUSFS_KP/KernelSU/10_enable_susfs_for_ksu.patch" || true
