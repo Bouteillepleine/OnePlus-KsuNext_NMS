@@ -1239,6 +1239,37 @@ runs:
 
         # ---- KernelSU-Next side -------------------------------------------
         cd "$KSU_FOLDER"
+
+        # A fix set is keyed on the susfs enable patch, but it is written against a
+        # particular KernelSU-Next tree as well -- the fix patches land on files the
+        # enable patch only half-touched, so their context is KSUN content. That
+        # second dependency had no key, and a KSUN-side move surfaced as a bare
+        # "Hunk #N FAILED" naming neither cause (run 43742890550: pinned KSUN
+        # a1289e4b lacked ksu_selinux_hide_keep_backup, which the v2.4.0-9b0b13f set
+        # expects to delete, so fix_selinux_hide.c.patch died at hunk 1).
+        # ksun_files.sha256 records the PRISTINE sum of every file the set patches.
+        # Compared here, before the enable patch rewrites them. A mismatch is only a
+        # warning: most KSUN commits touch none of these, and a set often still fits
+        # a file that moved. It is quoted back if a fix patch actually fails.
+        KSUN_DRIFT=""
+        KSUN_BASE="$FIXDIR/ksun_files.sha256"
+        if [ -f "$KSUN_BASE" ]; then
+          while read -r want path; do
+            case "$want" in ''|\#*) continue ;; esac
+            [ -n "$path" ] || continue
+            if [ ! -f "$path" ]; then KSUN_DRIFT="$KSUN_DRIFT $path(missing)"; continue; fi
+            got="$(sha256sum "$path" | awk '{print $1}')"
+            [ "$got" = "$want" ] || KSUN_DRIFT="$KSUN_DRIFT $path"
+          done < "$KSUN_BASE"
+          if [ -n "$KSUN_DRIFT" ]; then
+            echo "::warning::fix set $FIXSET was built against different KernelSU-Next content for:$KSUN_DRIFT (KSU ${KSU_COMMIT_SHA:-unknown}). Harmless unless the matching fix patch fails below."
+          else
+            echo "-- KernelSU-Next baseline matches fix set $FIXSET ($(grep -cv '^#' "$KSUN_BASE") files)"
+          fi
+        else
+          echo "::warning::fix set $FIXSET has no ksun_files.sha256; a KernelSU-Next-side mismatch will not be named. Generate it from a pristine KSUN checkout."
+        fi
+
         patch -p1 --forward < "$SUSFS_KP/KernelSU/10_enable_susfs_for_ksu.patch" || true
 
         rejects="$(find ./kernel -maxdepth 2 -name '*.rej' | sort)"
@@ -1263,6 +1294,16 @@ runs:
           # case rather than let set -e print a bare patch log and nothing else.
           if ! out="$(patch -p1 --forward -F0 < "$fix" 2>&1)"; then
             echo "$out"
+            # Name the KernelSU-Next side when the baseline already flagged this file;
+            # otherwise this reads as a susfs problem and sends you to the wrong repo.
+            for drifted in $KSUN_DRIFT; do
+              case "$drifted" in
+                "$base"|*/"$base")
+                  echo "::error::$base differs from the KernelSU-Next content fix set $FIXSET was built against -- this is KSUN-side drift, not susfs."
+                  echo "::error::You are on KSU ${KSU_COMMIT_SHA:-unknown}. Either refresh fix_$base.patch against it and update ksun_files.sha256, or set ksu_options to the revision the set targets (see the header of $KSUN_BASE)."
+                  ;;
+              esac
+            done
             if printf '%s' "$out" | grep -q 'Reversed (or previously applied)'; then
               echo "::error::fix_$base.patch is already applied -- susfs now does this itself."
               echo "::error::The enable patch changed (sha256 $ENABLE_SHA) and fix set $FIXSET no longer fits."
