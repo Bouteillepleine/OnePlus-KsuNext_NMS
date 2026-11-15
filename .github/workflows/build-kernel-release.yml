@@ -41,10 +41,10 @@ on:
         type: string
         default: ''
       ksu_options:
-        description: 'Enter KernelSU Next build json. hash = a branch (dev) or a 40-char SHA. PINNED: see susfs_ref below.'
+        description: 'Enter KernelSU Next build json. hash = a branch (dev) or a 40-char SHA. Floats with susfs_ref -- pin BOTH or neither; see susfs_ref below.'
         required: true
         type: string
-        default: '[{"type":"KSUN","hash":"a1289e4bf66f6d89c63bb0c78953e48e76746479"}]'
+        default: '[{"type":"KSUN","hash":"dev"}]'
       optimize_level:
         description: "Compiler optimization level"
         required: true
@@ -83,16 +83,20 @@ on:
         description: 'simonpunk/susfs4ksu ref to patch SUSFS into every kernel. auto = the gki branch matching each device, a branch/tag/40-char SHA pins it (a release you want to reproduce should pass a SHA), off (also none or -1) = build without SUSFS.'
         required: false
         type: string
-        # PINNED with ksu_options above, as a pair. Both refs float by default --
-        # susfs_ref=auto tracks a gki branch and ksu hash=dev tracks KSUN's branch --
-        # and on 2026-11-15 both moved at once: KSUN a1289e4b -> 7ccf6147 (#3996
-        # inode_setxattr hook) and susfs 395a8c0 -> 9b0b13f (which rewrote
-        # 10_enable_susfs_for_ksu.patch by 1315 lines and moved the whole
-        # selinux_hide hook set kernel-side). Each move alone breaks the v2.4.0 fix
-        # set; this pair is the newest measured clean. Unpin only together with a
-        # fix set that declares the new enable patch -- nms-canary.yml keeps
-        # building current upstream so the gap stays visible.
-        default: 1f59001c081dcb221e2fb0f777835084a8b4f542
+        # UNPINNED 2026-11-15, with ksu_options above, as a pair. The pin's own
+        # condition -- "unpin only together with a fix set that declares the new
+        # enable patch" -- is met: next/susfs_fix_patches/v2.4.0-9b0b13f declares
+        # enable-patch sha256 601de796, and the pair KSUN 7ccf6147 (dev) + susfs
+        # 9b0b13f (auto) was measured: the enable patch leaves 8 rejects, all 8 fix
+        # patches apply at -F0, zero leftover. selinux_hide.c does not even reject on
+        # dev -- dev carries ksu_selinux_hide_keep_backup, which the pinned a1289e4b
+        # lacked, and that one difference is what broke mixed-half builds (pinned
+        # KSUN + susfs=auto, run 43742890550).
+        # WARNING: both refs float again, so a move on either side can break the fix
+        # set. nms-canary.yml builds current upstream daily and is the tripwire. To
+        # reproduce a specific release pass an explicit sha for BOTH -- never pin one
+        # half, which is the exact failure above.
+        default: auto
       enable_adios:
         description: 'Enable ADIOS I/O scheduler support (5.10/5.15/6.1/6.6/6.12 kernels)'
         required: false
