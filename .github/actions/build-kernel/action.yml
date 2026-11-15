@@ -1328,6 +1328,16 @@ runs:
         # the result. It is written to run on a tree that ALREADY carries
         # NoMount, which is why the NoMount steps come first.
         bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_susfs_kernel.sh"
+
+        # susfs 9b0b13f moved KernelSU's setprocattr hook into
+        # security/selinux/hooks.c and reduced selinux_hide.c to a shell, which
+        # deletes the function the KernelSU-side timing probe lives in. postsusfs
+        # re-applies the equalisation there when that tree shape is present and is
+        # a no-op when it is not; the verify after it refuses a build where
+        # NEITHER hook carries a probe, so the DANGER row cannot ship silently.
+        bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" postsusfs
+        bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" verify
+
         cd "$COMMON_KERNEL_FOLDER"
         if ! grep -q 'ksu_handle_faccessat' fs/open.c; then
           echo "::error::fs/open.c has no ksu_handle_faccessat after the SUSFS kernel patch; the inline hooks did not land."
