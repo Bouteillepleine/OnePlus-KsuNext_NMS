@@ -151,6 +151,7 @@ jobs:
             -f op_model=android16-6.12 \
             -f op_target_model="$CANARY_TARGET" \
             -f ksu_options="$KSU_OPTIONS" \
+            -f susfs_ref=auto \
             -f optimize_level=O2
           echo "dispatched $CANARY_TARGET"
 
