@@ -92,9 +92,24 @@ jobs:
           # overwrite a known-good SHA in the state file.
           if [ -f heads.prev ]; then
             grep -v UNREACHABLE heads.txt > now.cmp || true
-            grep UNREACHABLE heads.txt | while read -r repo ref rest; do
-              grep "^$repo $ref " heads.prev || true
-            done >> now.cmp
+            # An unreachable source carries its last known SHA forward, so an
+            # outage does not read as drift. One that has NEVER resolved has no SHA
+            # to carry, and contributing nothing to both sides leaves it comparing
+            # equal to itself forever: that is how simonpunk/susfs4ksu sat untracked
+            # on this builder while susfs 9b0b13f rewrote the KernelSU-side enable
+            # patch straight past the canary. Say so and stop, because a canary with
+            # a blind spot is worse than a red one.
+            unseen=0
+            while read -r repo ref rest; do
+              [ -n "$repo" ] || continue
+              if prev="$(grep "^$repo $ref " heads.prev)"; then
+                printf '%s\n' "$prev" >> now.cmp
+              else
+                echo "::error::$repo $ref has never resolved, so it is absent from the baseline and its drift cannot be detected"
+                unseen=1
+              fi
+            done < <(grep UNREACHABLE heads.txt || true)
+            [ "$unseen" = 0 ] || exit 1
             sort -o now.cmp now.cmp
             sort heads.prev > prev.cmp
           else
