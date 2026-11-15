@@ -2289,9 +2289,13 @@ runs:
         # cannot match both, so kernel_patches ships scripts/bore_612_surgery.py.
         # Gate on the script being present AND a 7.0.x-only symbol in the tree, so
         # a patches_ref still carrying BORE 5.9.6 is left alone.
+        # The 7.0.x marker alone decides. A missing script is FATAL, not a skip:
+        # update_curr_bore() is applied only by the surgery, so skipping it builds
+        # a BORE that compiles and never accumulates burst time.
         SURGERY="$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/bore_612_surgery.py"
-        if [ "${KERNEL_VER}" = "6.12" ] && [ -f "$SURGERY" ] \
+        if [ "${KERNEL_VER}" = "6.12" ] \
            && grep -q 'sched_burst_protect_slice_cond_key' "$COMMON_KERNEL_FOLDER/kernel/sched/bore.c" 2>/dev/null; then
+          [ -f "$SURGERY" ] || { echo "::error::BORE 7.0.x needs scripts/bore_612_surgery.py from this patches_ref"; exit 1; }
           cd "$COMMON_KERNEL_FOLDER"
           python3 -I "$SURGERY" || { echo "::error::BORE 6.12 surgery failed"; exit 1; }
           # The surgery is idempotent, so the set_protect_slice sed above having
