@@ -240,7 +240,7 @@ jobs:
 
       - name: 📊 Analyze
         id: analysis
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           CCACHE_BUDGET_GB: ${{ inputs.ccache_budget_gb }}
           FORCE_CLEANUP: ${{ inputs.force_cleanup }}
@@ -398,7 +398,7 @@ jobs:
             | sort -u > configs_models.txt
 
       - name: 🗑️ Prune
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           CACHE_PATTERN: ${{ inputs.cache_pattern }}
           DEVICE_FILTER: ${{ inputs.device_filter }}
@@ -607,7 +607,7 @@ jobs:
           jq -r '"resolved=\(.count) processed=\(.processed) failed=\(.failed)"' toolchains.json
 
       - name: 🧰 Prune
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           DRY_RUN: ${{ inputs.dry_run }}
         with:
@@ -721,7 +721,7 @@ jobs:
 
     steps:
       - name: 🗑️ Clean old workflow runs
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           KEEP_RECENT_RUNS: ${{ inputs.keep_recent_runs }}
           DAYS_TO_KEEP: ${{ inputs.days_to_keep }}
@@ -844,7 +844,7 @@ jobs:
 
     steps:
       - name: 📊 Bucket state after cleanup
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           DRY_RUN: ${{ inputs.dry_run }}
           BEFORE_SIZE: ${{ needs.analyze.outputs.total_size }}
