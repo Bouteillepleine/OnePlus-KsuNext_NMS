@@ -56,268 +56,40 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Build Combined Config JSON
-        id: build-config-json
+      - name: Resolve Unique Projects
+        id: set-matrix
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "Finding config JSON files..."
-          mapfile -t files < <(find configs -type f -name "*.json" | sort)
+          # Shared with clean-up.yml so "which toolchains do we need?" has exactly
+          # one definition: this job uploads that set, the pruner keeps it. When the
+          # two drifted, an age-based prune could delete assets this job still
+          # considers required.
+          python3 .github/scripts/resolve_toolchain_assets.py \
+            --configs-dir configs \
+            --manifests-dir manifests \
+            --format json \
+            --output toolchains.json
 
-          echo "Found ${#files[@]} config file(s)."
+          matrix="$(jq -c '.matrix' toolchains.json)"
+          count="$(jq -r '.count' toolchains.json)"
+          failed="$(jq -r '.failed' toolchains.json)"
 
-          if [ "${#files[@]}" -eq 0 ]; then
-            echo "::error::No JSON config files found under configs/"
-            exit 1
+          {
+            echo "matrix=$matrix"
+            echo "count=$count"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Unique toolchains to mirror: $count (configs that failed to resolve: $failed)"
+
+          if [ "$failed" -gt 0 ]; then
+            jq -r '.failures[] | "::warning::\(.model): \(.error)"' toolchains.json
           fi
 
-          echo "Combining JSON files with Python..."
-
-          python3 - <<'PY'
-          import json
-          import sys
-          from pathlib import Path
-
-          files = sorted(Path("configs").rglob("*.json"))
-
-          configs = []
-          bad_files = []
-
-          for file in files:
-              try:
-                  text = file.read_text(encoding="utf-8-sig")
-
-                  if not text.strip():
-                      bad_files.append((str(file), "File is empty"))
-                      continue
-
-                  data = json.loads(text)
-
-                  if isinstance(data, list):
-                      configs.extend(data)
-                  elif isinstance(data, dict):
-                      configs.append(data)
-                  else:
-                      bad_files.append((str(file), f"Top-level JSON must be object or array, got {type(data).__name__}"))
-
-              except json.JSONDecodeError as e:
-                  bad_files.append((
-                      str(file),
-                      f"JSON decode error at line {e.lineno}, column {e.colno}: {e.msg}"
-                  ))
-              except Exception as e:
-                  bad_files.append((str(file), str(e)))
-
-          if bad_files:
-              print("::error::Invalid JSON config file(s) found")
-              for file, error in bad_files:
-                  print(f"::error file={file}::{error}")
-              sys.exit(1)
-
-          with open("all_configs.json", "w", encoding="utf-8") as f:
-              json.dump(configs, f, ensure_ascii=False, indent=2)
-
-          print(f"✅ Combined {len(configs)} config object(s) from {len(files)} file(s).")
-          PY
-
-          echo "Combined config count:"
-          jq 'length' all_configs.json
-
-          echo "First few configs:"
-          jq '.[0:5] | map({model, os_version, branch, manifest})' all_configs.json
-
-      - name: Resolve Unique Projects
-        id: set-matrix
-        shell: python
-        env:
-          PYTHONUNBUFFERED: "1"
-        run: |
-          import xml.etree.ElementTree as ET
-          import json
-          import os
-          import subprocess
-          import shutil
-          import urllib.parse
-          from pathlib import Path
-
-          def gha_output(name, value):
-              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
-                  f.write(f"{name}={value}\n")
-
-          def run_checked(args):
-              subprocess.run(args, check=True)
-
-          def sanitize_filename(value):
-              return (
-                  value.replace("/", "_")
-                       .replace("\\", "_")
-                       .replace(":", "_")
-                       .replace("@", "_")
-                       .replace(" ", "_")
-              )
-
-          def normalize_fetch_url(fetch):
-              if not fetch:
-                  return ""
-
-              return fetch.rstrip("/")
-
-          def build_project_url(base_url, project_name):
-              base_url = base_url.rstrip("/")
-              project_name = project_name.strip("/")
-              return f"{base_url}/{project_name}"
-
-          def build_archive_url(base_url, project_name, rev):
-              project_url = build_project_url(base_url, project_name)
-              encoded_rev = urllib.parse.quote(rev, safe="")
-
-              if "googlesource.com" in project_url:
-                  return f"{project_url}/+archive/{encoded_rev}.tar.gz"
-
-              if "github.com" in project_url:
-                  return f"{project_url}/archive/{encoded_rev}.tar.gz"
-
-              if "git.codelinaro.org" in project_url or "gitlab.com" in project_url:
-                  archive_name = Path(project_name).name
-                  return f"{project_url}/-/archive/{encoded_rev}/{archive_name}-{encoded_rev}.tar.gz"
-
-              raise ValueError(f"Unknown toolchain provider for: {project_url}")
-
-          with open("all_configs.json", "r", encoding="utf-8") as f:
-              configs = json.load(f)
-
-          unique_toolchains = {}
-
-          TOOLCHAIN_MAP = {
-              "clang/host/linux-x86": "clang",
-              "prebuilts/clang/host/linux-x86": "clang",
-              "prebuilts/rust": "rust",
-              "prebuilts/clang-tools": "clang-tools",
-              "prebuilts/build-tools": "build-tools",
-              "prebuilts/kernel-build-tools": "kernel-build-tools",
-              "AnyKernel3": "AnyKernel3",
-          }
-
-          print(f"Processing {len(configs)} configurations...")
-          print("-" * 70)
-
-          processed = 0
-          failed = 0
-
-          for cfg in configs:
-              op_model = cfg.get("model", "Unknown")
-              op_branch = cfg.get("branch", "")
-              op_manifest = cfg.get("manifest", "")
-              op_os_version_raw = cfg.get("os_version", "")
-              op_os_version = op_os_version_raw.lower()
-
-              if not op_manifest:
-                  print(f"⚠️ [{op_model}] Missing manifest, skipping.")
-                  failed += 1
-                  continue
-
-              xml_file = "temp_manifest.xml"
-
-              try:
-                  if op_manifest.startswith("https://"):
-                      print(f"🌐 [{op_model}] Fetching manifest URL: {op_manifest}")
-                      run_checked(["curl", "-LfsS", "--retry", "3", "-o", xml_file, op_manifest])
-
-                  elif op_branch.startswith("wild/"):
-                      local_manifest = Path("manifests") / op_os_version / op_manifest
-                      print(f"📄 [{op_model}] Using local manifest: {local_manifest}")
-
-                      if not local_manifest.exists():
-                          raise FileNotFoundError(f"Local manifest not found: {local_manifest}")
-
-                      shutil.copy(str(local_manifest), xml_file)
-
-                  else:
-                      url = f"https://raw.githubusercontent.com/OnePlusOSS/kernel_manifest/refs/heads/{op_branch}/{op_manifest}"
-                      print(f"🌐 [{op_model}] Fetching OnePlus manifest: {url}")
-                      run_checked(["curl", "-LfsS", "--retry", "3", "-o", xml_file, url])
-
-                  root = ET.parse(xml_file).getroot()
-
-                  remotes = {}
-                  for remote in root.findall("remote"):
-                      name = remote.get("name")
-                      fetch = remote.get("fetch")
-                      if name and fetch:
-                          remotes[name] = normalize_fetch_url(fetch)
-
-                  default = root.find("default")
-                  def_remote = default.get("remote") if default is not None else None
-                  def_rev = default.get("revision") if default is not None else None
-
-                  for project in root.findall("project"):
-                      name = project.get("name")
-                      if not name:
-                          continue
-
-                      type_label = None
-
-                      for repo_key, label in TOOLCHAIN_MAP.items():
-                          if repo_key in name:
-                              type_label = label
-                              break
-
-                      if not type_label:
-                          continue
-
-                      remote_name = project.get("remote", def_remote)
-                      rev = project.get("revision", def_rev)
-
-                      if not remote_name or not rev:
-                          print(f"⚠️ Skipping '{name}' because remote or revision cannot be resolved.")
-                          continue
-
-                      base_url = remotes.get(remote_name, "").rstrip("/")
-
-                      if not base_url:
-                          print(f"⚠️ Skipping '{name}' because remote '{remote_name}' has no fetch URL.")
-                          continue
-
-                      safe_rev = sanitize_filename(rev)
-                      cache_filename = f"{type_label}-{safe_rev}.tar.gz"
-
-                      if cache_filename in unique_toolchains:
-                          print(f"♻️ [{op_model}][{op_os_version_raw}] Existing {type_label}: {rev}")
-                          continue
-
-                      dl_url = build_archive_url(base_url, name, rev)
-
-                      unique_toolchains[cache_filename] = {
-                          "rev": rev,
-                          "url": dl_url,
-                          "name": name,
-                          "type_label": type_label,
-                          "cache_file": cache_filename,
-                      }
-
-                      print(f"🆕 [{op_model}][{op_os_version_raw}] New {type_label}: {rev}")
-                      print(f"    URL: {dl_url}")
-
-                  processed += 1
-
-              except Exception as e:
-                  failed += 1
-                  print(f"⚠️ Failed to process manifest '{op_manifest}' for {op_model}: {e}")
-
-          matrix = {"include": list(unique_toolchains.values())}
-          matrix_json = json.dumps(matrix, separators=(",", ":"))
-
-          gha_output("matrix", matrix_json)
-          gha_output("count", str(len(unique_toolchains)))
-
-          print("-" * 70)
-          print(f"✅ Processed configs: {processed}")
-          print(f"⚠️ Failed configs: {failed}")
-          print(f"✅ Found {len(unique_toolchains)} unique projects to mirror.")
-
-          if len(unique_toolchains) == 0:
-              print("::warning::No toolchain projects found. Mirror job will be skipped.")
+          if [ "$count" -eq 0 ]; then
+            echo "::warning::No toolchain projects found. Mirror job will be skipped."
+          fi
 
   mirror-to-release:
     name: mirror (${{ matrix.type_label }}, ${{ matrix.rev }})
