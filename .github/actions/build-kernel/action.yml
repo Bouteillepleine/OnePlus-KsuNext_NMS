@@ -1067,10 +1067,11 @@ runs:
           echo "-- Secondary manager key trusted: ${ALT_SIZE} / ${ALT_HASH}"
         fi
 
-        # The uapi include is KSUN's own: app_profile.h moved under include/uapi and
-        # the Kbuild was not told. Still gated, because adding it to a tree that
-        # does not have that layout is noise.
-        if [[ "$KSU_VERSION" -gt 33095 ]] && [[ "${{ env.KERNEL_VER }}" == "6.12" ]]; then
+        # The uapi include is KSUN's own: app_profile.h moved under include/uapi
+        # (a symlink to the repo-root uapi/) and the Kbuild was not told. Gated on
+        # KSU_VERSION alone -- the layout follows the KSU commit, not the kernel
+        # version, and the -I is appended last, so it can only resolve what fails.
+        if [[ "$KSU_VERSION" -gt 33095 ]]; then
           sed -i 's|ccflags-y += -I$(KSU_KERNEL_DIR) -I$(KSU_KERNEL_DIR)/include|ccflags-y += -I$(KSU_KERNEL_DIR) -I$(KSU_KERNEL_DIR)/include -I$(KSU_KERNEL_DIR)/include/uapi|' Kbuild
         fi
 
