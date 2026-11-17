@@ -708,19 +708,54 @@ runs:
         make V=1 rustavailable
         echo "::endgroup::"
 
+    - name: Fingerprint cache-invalidating build flags
+      shell: bash
+      env:
+        FP_CONFIG: ${{ inputs.op_config_json }}
+        FP_OPT: ${{ inputs.optimize_level }}
+        FP_MLGO: ${{ inputs.enable_mlgo }}
+        FP_AFDO: ${{ inputs.enable_afdo }}
+        FP_ADIOS: ${{ inputs.enable_adios }}
+        FP_BORE: ${{ inputs.enable_bore }}
+        FP_BORE_ON: ${{ inputs.bore_default_on }}
+        FP_SPOOF: ${{ inputs.spoof_config_gz }}
+        FP_SUSFS: ${{ inputs.susfs_ref }}
+        FP_NOMOUNT: ${{ inputs.nomount_ref }}
+        FP_PATCHES: ${{ inputs.patches_ref }}
+        FP_KSU: ${{ inputs.ksu_branch_or_hash }}
+      run: |
+        set -euo pipefail
+        echo "::group::Fingerprint build flags for the ccache key"
+        # Every value below reaches KCFLAGS, .config (so include/generated/autoconf.h,
+        # which every TU includes) or the patched source. Objects built with one set are
+        # unusable by another, and model+kernel+clang alone cannot tell them apart: the
+        # restore then reports a hit, misses ~100% of it, and saves over the bucket the
+        # other variant restores next. Both variants pay a full cold build, forever.
+        # ktimestamp is excluded on purpose -- it only reaches compile.h, one object.
+        cfg="$(jq -Sc 'del(.ktimestamp)' <<<"$FP_CONFIG")"
+        fp="$(printf '%s\0' \
+          "$FP_OPT" "$FP_MLGO" "$FP_AFDO" "$FP_ADIOS" "$FP_BORE" "$FP_BORE_ON" \
+          "$FP_SPOOF" "$FP_SUSFS" "$FP_NOMOUNT" "$FP_PATCHES" "$FP_KSU" "$cfg" \
+          | sha256sum | cut -c1-8)"
+        echo "CCACHE_FLAG_FP=$fp" >> "$GITHUB_ENV"
+        echo "ccache flag fingerprint: $fp"
+        echo "  opt=$FP_OPT mlgo=$FP_MLGO afdo=$FP_AFDO adios=$FP_ADIOS bore=$FP_BORE/$FP_BORE_ON spoof=$FP_SPOOF"
+        echo "  susfs=$FP_SUSFS nomount=$FP_NOMOUNT patches=$FP_PATCHES ksu=$FP_KSU"
+        echo "  device config: $(sha256sum <<<"$cfg" | cut -c1-8) (configs/*.json minus ktimestamp)"
+        echo "::endgroup::"
+
     - name: Restore ccache cache
       id: restore-ccache-cache
       uses: ./action-source/.github/actions/cache/restore
       if: ${{ inputs.clean == false || inputs.clean == 'false' }}
       with:
         cache_path: ${{ env.CCACHE_DIR }}
-        cache_key: ${{ inputs.ksu_type }}-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
+        cache_key: ${{ inputs.ksu_type }}-v4-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CCACHE_FLAG_FP }}-${{ env.CLANG_VERSION_SHORT }}
         cache_bucket: "ccache-cache"
         debug: ${{ inputs.debug }}
         github_token: ${{ inputs.github_token }}
         restore_keys: |
-          ${{ inputs.ksu_type }}-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
-          ${{ inputs.ksu_type }}-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
+          ${{ inputs.ksu_type }}-v4-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CCACHE_FLAG_FP }}-
 
     - name: Check and Prepare Caches
       shell: bash
@@ -3265,7 +3300,7 @@ runs:
       uses: ./action-source/.github/actions/cache/save
       with:
         cache_path: ${{ env.CCACHE_DIR }}
-        cache_key: ${{ inputs.ksu_type }}-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
+        cache_key: ${{ inputs.ksu_type }}-v4-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CCACHE_FLAG_FP }}-${{ env.CLANG_VERSION_SHORT }}
         cache_bucket: "ccache-cache"
         debug: ${{ inputs.debug }}
         github_token: ${{ inputs.github_token }}

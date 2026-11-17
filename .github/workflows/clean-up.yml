@@ -302,8 +302,10 @@ jobs:
               fs.readFileSync('configs_models.txt', 'utf8').split('\n').map(s => s.trim()).filter(Boolean)
             );
 
-            // cache-<FLAVOUR>-v<N>-<MODEL>-<OS>-<android..>-<clang>.tzst[.partXX]
-            const KEY_RE = /^cache-([A-Za-z0-9]+)-v(\d+)-(.+)-(A\d+)-(android\d+-[\d.]+)-([0-9a-f]+)\.(tzst|tar)(\.part[a-z]{2})?$/;
+            // cache-<FLAVOUR>-v<N>-<MODEL>-<OS>-<android..>-<flagfp>-<clang>.tzst[.partXX]
+            // <flagfp> is optional so pre-v4 names still parse and stay prunable.
+            const CACHE_SCHEMA = 4;
+            const KEY_RE = /^cache-([A-Za-z0-9]+)-v(\d+)-(.+)-(A\d+)-(android\d+-[\d.]+)(?:-([0-9a-f]{8}))?-([0-9a-f]+)\.(tzst|tar)(\.part[a-z]{2})?$/;
 
             let total = 0;
             const byFlavour = new Map();
@@ -312,19 +314,21 @@ jobs:
             let unparsed = 0;
             let orphanModelBytes = 0;
             let foreignBytes = 0;
+            let staleSchemaBytes = 0;
 
             for (const a of assets) {
               total += a.size;
               const m = KEY_RE.exec(a.name);
               if (!m) { unparsed++; continue; }
 
-              const [, flavour, , model, os, kernel] = m;
+              const [, flavour, ver, model, os, kernel, flagfp] = m;
 
               byFlavour.set(flavour, (byFlavour.get(flavour) || 0) + a.size);
               byModel.set(model, (byModel.get(model) || 0) + a.size);
 
-              const gk = `${flavour}|${model}|${os}|${kernel}`;
+              const gk = `${flavour}|${model}|${os}|${kernel}|v${ver}|${flagfp || '-'}`;
               groups.set(gk, (groups.get(gk) || 0) + 1);
+              if (Number(ver) < CACHE_SCHEMA) staleSchemaBytes += a.size;
 
               if (flavour !== FLAVOUR) foreignBytes += a.size;
               if (!liveModels.has(model)) orphanModelBytes += a.size;
@@ -348,6 +352,7 @@ jobs:
                 ['Budget', `${budgetGB.toFixed(0)} GB`],
                 ['Unparseable names', String(unparsed)],
                 ['Groups with >1 clang rev', String(supersededGroups)],
+                ['Unreachable (old key schema)', `${(staleSchemaBytes / 1024 ** 3).toFixed(2)} GB`],
                 [`Foreign flavour (not ${FLAVOUR})`, `${GB(foreignBytes)} GB`],
                 ['Model gone from configs/', `${GB(orphanModelBytes)} GB`],
                 ['Cleanup needed', shouldCleanup ? 'Yes' : 'No'],
@@ -451,7 +456,8 @@ jobs:
               fs.readFileSync('configs_models.txt', 'utf8').split('\n').map(s => s.trim()).filter(Boolean)
             );
 
-            const KEY_RE = /^cache-([A-Za-z0-9]+)-v(\d+)-(.+)-(A\d+)-(android\d+-[\d.]+)-([0-9a-f]+)\.(tzst|tar)(\.part[a-z]{2})?$/;
+            const CACHE_SCHEMA = 4;
+            const KEY_RE = /^cache-([A-Za-z0-9]+)-v(\d+)-(.+)-(A\d+)-(android\d+-[\d.]+)(?:-([0-9a-f]{8}))?-([0-9a-f]+)\.(tzst|tar)(\.part[a-z]{2})?$/;
 
             // A >2 GB cache is uploaded split as <base>.partaa/.partab. Those parts
             // are one logical cache: fold them so a prune never strips half of one.
@@ -471,7 +477,9 @@ jobs:
                   model: m ? m[3] : null,
                   os: m ? m[4] : null,
                   kernel: m ? m[5] : null,
-                  clang: m ? m[6] : null,
+                  ver: m ? m[2] : null,
+                  flagfp: m ? m[6] : null,
+                  clang: m ? m[7] : null,
                 };
                 items.set(base, it);
               }
@@ -489,15 +497,18 @@ jobs:
               return it.model === deviceFilter || it.kernel.startsWith(deviceFilter);
             };
 
-            // superseded: within flavour+model+os+kernel, the restore fallback key
-            // `<flavour>-v3-<model>-<os>-<kernel>-` can only ever serve one asset,
-            // so every extra clang rev is dead weight.
+            // superseded: within flavour+model+os+kernel+flagfp, the restore fallback key
+            // `<flavour>-v4-<model>-<os>-<kernel>-<flagfp>-` can only ever serve one asset,
+            // so every extra clang rev is dead weight. An asset from an older key schema
+            // is unreachable by any key the builder now emits, so it is superseded outright
+            // -- without this, bumping the schema would strand a full bucket as dead weight.
             const supersededIds = new Set();
             if (pattern === 'superseded') {
               const groups = new Map();
               for (const it of items.values()) {
                 if (!it.parsed) continue;
-                const gk = `${it.flavour}|${it.model}|${it.os}|${it.kernel}`;
+                if (Number(it.ver) < CACHE_SCHEMA) { supersededIds.add(it.base); continue; }
+                const gk = `${it.flavour}|${it.model}|${it.os}|${it.kernel}|${it.flagfp || '-'}`;
                 if (!groups.has(gk)) groups.set(gk, []);
                 groups.get(gk).push(it);
               }
@@ -902,7 +913,7 @@ jobs:
               summary.addRaw('- Re-run with `dry_run: false` to apply.\n');
             } else {
               summary
-                .addRaw('- `superseded` is safe to run weekly; it only drops clang revs the restore fallback can never reach.\n')
+                .addRaw('- `superseded` is safe to run weekly; it only drops clang revs and old key schemas the restore fallback can never reach.\n')
                 .addRaw('- `foreign_flavour` and `orphan_model` are one-offs after a rename or a bisect campaign.\n');
             }
 
