@@ -1445,8 +1445,14 @@ jobs:
           DRIVER_VER="${driver_builds[0]}"
           echo "driver build $DRIVER_VER, KSU ${KSU_REF:-?} = ${KSU_SHA:0:8}"
 
+          # Every api.github.com read here carries the token. Unauthenticated it is 60
+          # requests per hour per IP, shared across the whole runner pool, so this
+          # answers 403 at random -- measured on nm1.36.0-r2, where it emptied
+          # REF_SIGNER and shipped 83 kernels with no manager APK. The asset download
+          # below stays anonymous: the header breaks the redirect into the object store.
           REF_SIGNER=""
           if REF_URL=$(curl -fsSL --retry 3 --retry-delay 5 --retry-connrefused \
+                --retry-all-errors -H "Authorization: Bearer $GH_TOKEN" \
                 "https://api.github.com/repos/KernelSU-Next/KernelSU-Next/releases/latest" \
                 | jq -r '[.assets[].browser_download_url | select(endswith("-release.apk"))
                           | select(contains("-spoofed_") | not)] | .[0] // empty') \
@@ -1511,6 +1517,7 @@ jobs:
             local url
             [ -n "${KSU_REF:-}" ] || return 1
             curl -fsSL --retry 3 --retry-delay 5 --retry-connrefused \
+              --retry-all-errors -H "Authorization: Bearer $GH_TOKEN" \
               "https://api.github.com/repos/KernelSU-Next/KernelSU-Next/releases/tags/$KSU_REF" \
               > mgr-work/release.json 2>/dev/null || return 1
             for url in $(jq -r '[.assets[].browser_download_url
