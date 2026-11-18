@@ -24,7 +24,7 @@
   "ttl": true,
   "ip_set": true,
   "unicode": true,
-  "ntsync": false,
+  "ntsync": true,
   "blacklist_modules": "oplus_secure_guard_new",
   "uname": "6-g5fd39602326e-ab16372235-4k",
   "ktimestamp": "Thu Sep 17 08:57:15 UTC 2026"
