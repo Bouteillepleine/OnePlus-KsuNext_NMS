@@ -2255,6 +2255,7 @@ runs:
         patch -p1 < "$PATCHFILE"
         mkdir -p "$COMMON_KERNEL_FOLDER/kernel/module/module_overlay/modules"
         cp "$KO" "$COMMON_KERNEL_FOLDER/kernel/module/module_overlay/modules/inte.ko"
+        echo "INTE_OVERLAY_EMBEDDED=1" >> "$GITHUB_ENV"
         echo "✅ embedded $(basename "$KO") as kernel/module/module_overlay/modules/inte.ko"
 
     - name: 🧠 Apply BORE scheduler
@@ -2941,6 +2942,18 @@ runs:
         ccache -s
         echo "============================================"
         echo "::endgroup::"
+
+    - name: Verify inte overlay was baked
+      if: ${{ env.INTE_OVERLAY_EMBEDDED == '1' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        GEN="$COMMON_KERNEL_FOLDER/out/kernel/module/module_overlay/overlay_files.c"
+        if [ ! -f "$GEN" ] || ! grep -q '\.name = "inte"' "$GEN"; then
+          echo "::error::module_overlay embedded no inte payload ($GEN); kernel would load stock inte"
+          exit 1
+        fi
+        echo "✅ overlay_files.c carries inte ($(grep -c '0x' "$GEN") data lines)"
 
     - name: Build inte overlay module
       id: build_inte
