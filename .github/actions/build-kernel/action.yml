@@ -2956,13 +2956,12 @@ runs:
         export ARCH=arm64 SUBARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
         export LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
         OUT="$COMMON_KERNEL_FOLDER/out"
-        # External modpost reads $objtree/Module.symvers for base-kernel symbols + CRCs.
-        # The GKI build leaves vmlinux.symvers but no top-level Module.symvers, so seed it.
-        if [ -s "$OUT/vmlinux.symvers" ] && [ ! -s "$OUT/Module.symvers" ]; then
-          cp "$OUT/vmlinux.symvers" "$OUT/Module.symvers"
-        fi
-        make -C "$COMMON_KERNEL_FOLDER" O="$OUT" M="$WORK" modules \
-          || make -C "$OUT" M="$WORK" modules
+        # Feed the base-kernel symbols (with CRCs) via a SEPARATE symbol file so imports
+        # resolve and modversions bake in, without overwriting out/Module.symvers (which the
+        # kernel's own module-final stage relies on). GKI leaves these in vmlinux.symvers.
+        SYMS="$RUNNER_TEMP/inte_base.symvers"
+        cp "$OUT/vmlinux.symvers" "$SYMS"
+        make -C "$COMMON_KERNEL_FOLDER" O="$OUT" M="$WORK" KBUILD_EXTRA_SYMBOLS="$SYMS" modules
         if [ ! -f "$WORK/inte.ko" ]; then
           echo "::error::inte.ko was not produced"
           exit 1
