@@ -25,7 +25,7 @@
   "ip_set": true,
   "unicode": true,
   "ntsync": false,
-  "blacklist_modules": "oplus_secure_guard_new",
+  "blacklist_modules": "oplus_secure_guard_new,oplus_bsp_file_read_record",
   "uname": "6-g925a103d123c-ab15898589-4k",
   "ktimestamp": "Mon Jul 20 17:37:05 UTC 2026"
 }
