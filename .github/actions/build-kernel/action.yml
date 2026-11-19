@@ -2902,7 +2902,10 @@ runs:
           
           ls -la "$DEBUG_ARTIFACTS_FOLDER"
         else
-          make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" -j"$(nproc --all)" O="$OUT" KCFLAGS="$KCFLAGS" KCPPFLAGS="$KCPPFLAGS" "${AFDO_ARGS[@]}" Image 2>&1 | tee build.log
+          TARGETS=(Image)
+          # inte.ko is an external module: it needs the modules stage (Module.symvers, module.lds)
+          if [ "${{ inputs.build_inte_overlay }}" == "true" ]; then TARGETS+=(modules); fi
+          make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" -j"$(nproc --all)" O="$OUT" KCFLAGS="$KCFLAGS" KCPPFLAGS="$KCPPFLAGS" "${AFDO_ARGS[@]}" "${TARGETS[@]}" 2>&1 | tee build.log
         fi
         
         REAL_CONFIG="$OUT/.config"
@@ -2976,12 +2979,12 @@ runs:
         export PAHOLE="$KERNEL_PLATFORM_FOLDER/prebuilts/kernel-build-tools/linux-x86/bin/pahole"
         WRAP="$COMMON_KERNEL_FOLDER/ld-wrapper"
         OUT="$COMMON_KERNEL_FOLDER/out"
-        # Only the debug build runs "Image modules"; the default build is Image-only and
-        # leaves no Module.symvers or scripts/module.lds, which an external module needs.
+        # Build Kernel adds the modules target when build_inte_overlay is set, which leaves
+        # Module.symvers + scripts/module.lds; the else branch is a fallback for Image-only trees.
         if [ -s "$OUT/Module.symvers" ]; then
           make LD="$WRAP" HOSTLD="$WRAP" -C "$COMMON_KERNEL_FOLDER" O="$OUT" M="$WORK" modules
         else
-          echo "::warning::Image-only build (debug=false): preparing module infrastructure"
+          echo "::warning::no Module.symvers (Image-only tree): preparing module infrastructure"
           make LD="$WRAP" HOSTLD="$WRAP" -C "$COMMON_KERNEL_FOLDER" O="$OUT" modules_prepare
           SYMS="$RUNNER_TEMP/inte_base.symvers"
           cp "$OUT/vmlinux.symvers" "$SYMS"
