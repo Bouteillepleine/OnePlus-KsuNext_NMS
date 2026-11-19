@@ -2245,6 +2245,11 @@ runs:
           echo "::error::inte.ko present but module_overlay patch missing: $PATCHFILE"
           exit 1
         fi
+        missing=()
+        for t in zstd xxd; do command -v "$t" >/dev/null 2>&1 || missing+=("$t"); done
+        if [ ${#missing[@]} -gt 0 ]; then
+          sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing[@]}"
+        fi
         cd "$COMMON_KERNEL_FOLDER"
         echo "Applying module_overlay patch: $(basename "$PATCHFILE")"
         patch -p1 < "$PATCHFILE"
