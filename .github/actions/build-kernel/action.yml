@@ -81,6 +81,11 @@ inputs:
     required: false
     type: string
     default: config
+  build_inte_overlay:
+    description: 'Build the neutered inte.ko (OPlus kernel-integrity module) as an external module against this build and upload it as an artifact. One-time per KMI: the uploaded .ko is committed to kernel_patches/oneplus/module_overlay/modules/ and baked by the embed step on later builds. Does not embed anything itself.'
+    required: false
+    type: boolean
+    default: false
   github_token:
     description: 'GitHub Token'
     required: true
@@ -2225,6 +2230,28 @@ runs:
           patch -p1 < "$DEBLOAT_PATCH"
         fi
 
+    - name: Embed inte overlay module
+      shell: bash
+      run: |
+        set -euo pipefail
+        MODDIR="$BOUTEILLE_KERNEL_PATCHES_FOLDER/oneplus/module_overlay"
+        KO="$MODDIR/modules/inte_${ANDROID_VER}-${KERNEL_VER}.ko"
+        PATCHFILE="$MODDIR/0001-module-Add-module-intercept-and-overlay-mechanism-${ANDROID_VER}-${KERNEL_VER}.patch"
+        if [ ! -f "$KO" ]; then
+          echo "No committed inte.ko for ${ANDROID_VER}-${KERNEL_VER}; skipping module_overlay embed."
+          exit 0
+        fi
+        if [ ! -f "$PATCHFILE" ]; then
+          echo "::error::inte.ko present but module_overlay patch missing: $PATCHFILE"
+          exit 1
+        fi
+        cd "$COMMON_KERNEL_FOLDER"
+        echo "Applying module_overlay patch: $(basename "$PATCHFILE")"
+        patch -p1 < "$PATCHFILE"
+        mkdir -p "$COMMON_KERNEL_FOLDER/kernel/module/module_overlay/modules"
+        cp "$KO" "$COMMON_KERNEL_FOLDER/kernel/module/module_overlay/modules/inte.ko"
+        echo "✅ embedded $(basename "$KO") as kernel/module/module_overlay/modules/inte.ko"
+
     - name: 🧠 Apply BORE scheduler
       shell: bash
       if: ${{ inputs.enable_bore == true || inputs.enable_bore == 'true' }}
@@ -2909,6 +2936,47 @@ runs:
         ccache -s
         echo "============================================"
         echo "::endgroup::"
+
+    - name: Build inte overlay module
+      id: build_inte
+      if: ${{ inputs.build_inte_overlay == true || inputs.build_inte_overlay == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Build neutered inte.ko (module_overlay payload)"
+        SRC="$BOUTEILLE_KERNEL_PATCHES_FOLDER/oneplus/module_overlay/inte_src"
+        if [ ! -f "$SRC/oplus_kernel_security_check.c" ]; then
+          echo "::error::inte source not found at $SRC"
+          exit 1
+        fi
+        WORK="$RUNNER_TEMP/inte_build"
+        rm -rf "$WORK"; mkdir -p "$WORK"
+        cp "$SRC/oplus_kernel_security_check.c" "$SRC/Kbuild" "$WORK/"
+        export LLVM=1 LLVM_IAS=1
+        export ARCH=arm64 SUBARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
+        export LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
+        make -C "$COMMON_KERNEL_FOLDER" O="$COMMON_KERNEL_FOLDER/out" M="$WORK" modules \
+          || make -C "$COMMON_KERNEL_FOLDER/out" M="$WORK" modules
+        if [ ! -f "$WORK/inte.ko" ]; then
+          echo "::error::inte.ko was not produced"
+          exit 1
+        fi
+        OUT_DIR="$GITHUB_WORKSPACE/inte_overlay_out"
+        mkdir -p "$OUT_DIR"
+        OUT_KO="inte_${ANDROID_VER}-${KERNEL_VER}.ko"
+        cp "$WORK/inte.ko" "$OUT_DIR/$OUT_KO"
+        echo "✅ built $OUT_KO ($(stat -c%s "$OUT_DIR/$OUT_KO") bytes)"
+        modinfo "$OUT_DIR/$OUT_KO" 2>/dev/null | grep -iE 'vermagic|^name|depends' || true
+        sha256sum "$OUT_DIR/$OUT_KO"
+        echo "::endgroup::"
+
+    - name: Upload inte overlay module
+      if: ${{ (inputs.build_inte_overlay == true || inputs.build_inte_overlay == 'true') && success() }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: inte-overlay-${{ env.ANDROID_VER }}-${{ env.KERNEL_VER }}-${{ env.OP_MODEL }}
+        path: ${{ github.workspace }}/inte_overlay_out/inte_${{ env.ANDROID_VER }}-${{ env.KERNEL_VER }}.ko
+        if-no-files-found: error
 
     - name: 📊 ccache Post-Build Statistics
       id: ccache_stats
