@@ -1504,6 +1504,23 @@ runs:
         echo "✅ SUSFS $SUSVER applied"
         echo "::endgroup::"
 
+    # seqno and postsusfs settle the deferrals the NoMount steps record, and both
+    # live inside "Apply SUSFS" -- so with susfs_ref empty they never ran and
+    # assert-config refused the build with three guards unplaced (seen on a fork;
+    # our own dispatches all use susfs_ref=auto). Each subcommand checks its own
+    # deferral state, so nothing already placed is touched twice. Kept separate
+    # rather than hoisted: seqno must follow the SUSFS enable patch.
+    - name: Settle deferred NoMount guards (no SUSFS)
+      if: ${{ env.OP_NMS == 'true' && env.SUSFS_ON != 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Settle deferred NoMount guards"
+        bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" seqno
+        bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" postsusfs
+        bash "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/apply_nomount_stack.sh" verify
+        echo "::endgroup::"
+
     - name: Keep app seccomp filters when KSU grants root
       shell: bash
       run: |
