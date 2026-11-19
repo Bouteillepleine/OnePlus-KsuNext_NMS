@@ -2954,14 +2954,22 @@ runs:
         cp "$SRC/oplus_kernel_security_check.c" "$SRC/Kbuild" "$WORK/"
         export LLVM=1 LLVM_IAS=1
         export ARCH=arm64 SUBARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
-        export LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
+        export AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
+        export PAHOLE="$KERNEL_PLATFORM_FOLDER/prebuilts/kernel-build-tools/linux-x86/bin/pahole"
+        WRAP="$COMMON_KERNEL_FOLDER/ld-wrapper"
         OUT="$COMMON_KERNEL_FOLDER/out"
-        # Feed the base-kernel symbols (with CRCs) via a SEPARATE symbol file so imports
-        # resolve and modversions bake in, without overwriting out/Module.symvers (which the
-        # kernel's own module-final stage relies on). GKI leaves these in vmlinux.symvers.
-        SYMS="$RUNNER_TEMP/inte_base.symvers"
-        cp "$OUT/vmlinux.symvers" "$SYMS"
-        make -C "$COMMON_KERNEL_FOLDER" O="$OUT" M="$WORK" KBUILD_EXTRA_SYMBOLS="$SYMS" modules
+        # Only the debug build runs "Image modules"; the default build is Image-only and
+        # leaves no Module.symvers or scripts/module.lds, which an external module needs.
+        if [ -s "$OUT/Module.symvers" ]; then
+          make LD="$WRAP" HOSTLD="$WRAP" -C "$COMMON_KERNEL_FOLDER" O="$OUT" M="$WORK" modules
+        else
+          echo "::warning::Image-only build (debug=false): preparing module infrastructure"
+          make LD="$WRAP" HOSTLD="$WRAP" -C "$COMMON_KERNEL_FOLDER" O="$OUT" modules_prepare
+          SYMS="$RUNNER_TEMP/inte_base.symvers"
+          cp "$OUT/vmlinux.symvers" "$SYMS"
+          make LD="$WRAP" HOSTLD="$WRAP" -C "$COMMON_KERNEL_FOLDER" O="$OUT" M="$WORK" \
+            KBUILD_EXTRA_SYMBOLS="$SYMS" modules
+        fi
         if [ ! -f "$WORK/inte.ko" ]; then
           echo "::error::inte.ko was not produced"
           exit 1
