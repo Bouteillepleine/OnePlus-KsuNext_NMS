@@ -979,6 +979,33 @@ runs:
       shell: bash
       run: python3 -I "$BOUTEILLE_KERNEL_PATCHES_FOLDER/scripts/fix_oplus_task_struct_kabi.py"
 
+    - name: Apply 6.12 CVE backports
+      if: ${{ env.KERNEL_VER == '6.12' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        D="$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/cve/6.12"
+        cd "$COMMON_KERNEL_FOLDER"
+        for n in $(ls "$D" | grep -oE '^[0-9]{4}-CVE-[0-9]+-[0-9]+' | sort -u); do
+          r=""
+          for v in "$D/$n.patch" "$D/$n".v*.patch; do
+            [ -f "$v" ] || continue
+            if patch -p1 -R --dry-run -s -f -F0 < "$v" >/dev/null 2>&1; then r="already present"; break; fi
+            if patch -p1 --dry-run -s -f -F0 < "$v" >/dev/null 2>&1; then
+              patch -p1 -s -f -F0 --no-backup-if-mismatch < "$v"; r="applied $(basename "$v")"; break
+            fi
+          done
+          if [ -z "$r" ]; then
+            while IFS='|' read -r p f kind re; do
+              [ "$p" = "$n" ] || continue
+              if [ "$kind" = fixed ] && grep -qP -- "$re" "$f"; then r="already present (marker)"; break; fi
+              if [ "$kind" = requires ] && ! grep -qP -- "$re" "$f"; then r="not applicable"; break; fi
+            done < "$D/markers"
+          fi
+          [ -n "$r" ] || { echo "::error::$n does not apply to this tree"; exit 1; }
+          echo "$n: $r"
+        done
+
     - name: Drop the unbuildable wl2868c regulator
       shell: bash
       run: |
