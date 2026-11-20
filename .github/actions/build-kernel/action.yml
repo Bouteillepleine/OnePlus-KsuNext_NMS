@@ -2225,6 +2225,26 @@ runs:
           patch -p1 < "$DEBLOAT_PATCH"
         fi
 
+    - name: Apply CVE-2026-43499 rtmutex fix
+      if: ${{ env.KERNEL_VER == '6.12' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        CVE="$BOUTEILLE_KERNEL_PATCHES_FOLDER/common/cve"
+        cd "$COMMON_KERNEL_FOLDER"
+        RT=kernel/locking/rtmutex.c
+        if ! grep -q 'waiter_task' "$RT"; then
+          P="$CVE/cve-2026-43499-rtmutex-full.patch"
+        elif ! grep -q 'never enqueued' "$RT"; then
+          P="$CVE/cve-2026-43499-rtmutex-followup.patch"
+        else
+          echo "rtmutex already carries the full CVE-2026-43499 fix"
+          exit 0
+        fi
+        echo "Applying $(basename "$P")"
+        patch -p1 --no-backup-if-mismatch < "$P"
+        grep -q 'never enqueued' "$RT" && grep -q 'unlikely(ret < 0)' kernel/locking/rtmutex_api.c
+
     - name: Embed inte overlay module
       shell: bash
       run: |
