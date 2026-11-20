@@ -3074,7 +3074,7 @@ runs:
         echo "::endgroup::"
 
     - name: Upload inte overlay module
-      if: ${{ steps.build_inte.outcome == 'success' }}
+      if: ${{ steps.build_inte.outcome == 'success' && (inputs.debug == true || inputs.debug == 'true') }}
       uses: actions/upload-artifact@v7
       with:
         name: inte-overlay-${{ env.ANDROID_VER }}-${{ env.KERNEL_VER }}-${{ env.OP_MODEL }}
