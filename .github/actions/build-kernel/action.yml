@@ -2135,6 +2135,10 @@ runs:
             subs["CONFIG_LLD_VERSION"] = str(lld_code)
         if rustc:
             subs["CONFIG_RUSTC_VERSION_TEXT"] = '"%s"' % rustc
+            m = re.search(r"(\d+)\.(\d+)\.(\d+)", rustc)
+            if m:
+                major, minor, patch = (int(x) for x in m.groups())
+                subs["CONFIG_RUSTC_VERSION"] = str(major * 100000 + minor * 100 + patch)
 
         out, hit = [], []
         for line in open(path):

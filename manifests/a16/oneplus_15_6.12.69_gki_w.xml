@@ -17,7 +17,7 @@
     <linkfile dest="kernel_platform/build/prebuilts/kernel-build-tools" src="."/>
   </project>
   <project remote="clo-la" name="kernelplatform/prebuilts-master/clang/host/linux-x86" path="kernel_platform/prebuilts/clang/host/linux-x86" revision="e6e84a60b1b4b68ee7de5a66fa63fc95fe9fe131" upstream="refs/heads/ks-kernel.lnx.5.0.r3-rel" groups="ddk"/>
-  <project remote="clo-la" name="kernel_platform/prebuilts/rust" path="kernel_platform/prebuilts/rust" revision="6ff98fecc15373d056564f1ad13508f812d90fa9" upstream="refs/heads/ks-kernel.lnx.5.0.r3-rel" groups="ddk"/>
+  <project remote="clo-la" name="kernel_platform/prebuilts/rust" path="kernel_platform/prebuilts/rust" revision="66ce386a11a7f57f722be667d0d1c314aab0771c" upstream="refs/heads/ks-kernel.lnx.5.0.r3-rel" groups="ddk"/>
   <project remote="clo-la" name="kernel_platform/prebuilts/clang-tools" path="kernel_platform/prebuilts/clang-tools" revision="8d2e8177f56ed0543cc8866ecad6f9f32f25fffe" upstream="refs/heads/ks-kernel.lnx.5.0.r3-rel" groups="ddk">
     <linkfile dest="kernel_platform/build/prebuilts/clang-tools" src="."/>
   </project>
