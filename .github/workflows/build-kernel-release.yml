@@ -1171,9 +1171,6 @@ jobs:
           > change and **is** tunable at runtime — \`/proc/sys/kernel/sched_bore\` (1 = on, 0 = off, no
           > reboot), plus the \`sched_burst_*\` knobs beside it. Measured **0 CRC drift across 19388
           > exports**, so no vendor module can fail to load because of it.
-          >
-          > ⚠️ BORE is boot-verified on the OnePlus 15 (6.12.69). Other devices are compile- and
-          > ABI-verified only. If a device misbehaves, set \`sched_bore\` to 0 and reboot-free revert.
           EOF
 
           cat << EOF >> release_notes.md
@@ -1185,11 +1182,6 @@ jobs:
           **Feature key:** 🐦 HMBIRD · 🫥 NoMount · 🚀 BBR · 🛡️ BBG · 🌐 TTL · 🧱 IP_SET & IPv6 NAT · 🔧 Unicode Fix · 💻 Droidspaces · 🔃 NTSync · 🧠 BORE
 
           > 6.12 kernels ship a leaner set (no BBG/Droidspaces/NTSync); SM8750/MT6991 devices add HMBIRD.
-
-          > ⚠️ **Pick by the banner, not the sublevel.** Run \`uname -r\` and take the zip whose
-          > banner matches field for field. The KMI generation (\`android16-5\` vs \`android16-6\`)
-          > decides whether your vendor modules load at all, and the sublevel tells which firmware
-          > the zip was cut for. A mismatch is refused before the partition is touched.
 
           <details>
           <summary>📥 Expand the full list of ${#device_info[@]} device downloads</summary>
