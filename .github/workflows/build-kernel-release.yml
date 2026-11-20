@@ -128,11 +128,6 @@ on:
         type: choice
         options: [config, 'on', 'off']
         default: config
-      build_inte_overlay:
-        description: 'Build the neutered inte.ko (OPlus kernel-integrity module) as an external module and upload it as an artifact (one-time, per KMI). Does not embed anything; the uploaded .ko gets committed to kernel_patches module_overlay/modules/.'
-        required: false
-        type: boolean
-        default: false
 
 jobs:
   set-op-model:
@@ -691,7 +686,6 @@ jobs:
           spoof_config_gz: ${{ inputs.spoof_config_gz || 'config' }}
           clean: ${{ inputs.clean_build }}
           debug: ${{ inputs.debug }}
-          build_inte_overlay: ${{ inputs.build_inte_overlay }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 📊 Build statistics

@@ -81,11 +81,6 @@ inputs:
     required: false
     type: string
     default: config
-  build_inte_overlay:
-    description: 'Build the neutered inte.ko (OPlus kernel-integrity module) as an external module against this build and upload it as an artifact. One-time per KMI: the uploaded .ko is committed to kernel_patches/oneplus/module_overlay/modules/ and baked by the embed step on later builds. Does not embed anything itself.'
-    required: false
-    type: boolean
-    default: false
   github_token:
     description: 'GitHub Token'
     required: true
@@ -2904,7 +2899,7 @@ runs:
         else
           TARGETS=(Image)
           # inte.ko is an external module: it needs the modules stage (Module.symvers, module.lds)
-          if [ "${{ inputs.build_inte_overlay }}" == "true" ]; then TARGETS+=(modules); fi
+          if [ "$KERNEL_VER" == "6.12" ]; then TARGETS+=(modules); fi
           make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" -j"$(nproc --all)" O="$OUT" KCFLAGS="$KCFLAGS" KCPPFLAGS="$KCPPFLAGS" "${AFDO_ARGS[@]}" "${TARGETS[@]}" 2>&1 | tee build.log
         fi
         
@@ -2960,7 +2955,8 @@ runs:
 
     - name: Build inte overlay module
       id: build_inte
-      if: ${{ inputs.build_inte_overlay == true || inputs.build_inte_overlay == 'true' }}
+      if: ${{ env.KERNEL_VER == '6.12' }}
+      continue-on-error: true
       shell: bash
       run: |
         set -euo pipefail
@@ -2979,7 +2975,7 @@ runs:
         export PAHOLE="$KERNEL_PLATFORM_FOLDER/prebuilts/kernel-build-tools/linux-x86/bin/pahole"
         WRAP="$COMMON_KERNEL_FOLDER/ld-wrapper"
         OUT="$COMMON_KERNEL_FOLDER/out"
-        # Build Kernel adds the modules target when build_inte_overlay is set, which leaves
+        # Build Kernel adds the modules target on 6.12, which leaves
         # Module.symvers + scripts/module.lds; the else branch is a fallback for Image-only trees.
         if [ -s "$OUT/Module.symvers" ]; then
           make LD="$WRAP" HOSTLD="$WRAP" -C "$COMMON_KERNEL_FOLDER" O="$OUT" M="$WORK" modules
@@ -3005,7 +3001,7 @@ runs:
         echo "::endgroup::"
 
     - name: Upload inte overlay module
-      if: ${{ (inputs.build_inte_overlay == true || inputs.build_inte_overlay == 'true') && success() }}
+      if: ${{ steps.build_inte.outcome == 'success' }}
       uses: actions/upload-artifact@v7
       with:
         name: inte-overlay-${{ env.ANDROID_VER }}-${{ env.KERNEL_VER }}-${{ env.OP_MODEL }}
