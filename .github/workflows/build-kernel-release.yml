@@ -462,6 +462,7 @@ jobs:
             echo "| 🧰 ADIOS · Debug artifacts | ${{ inputs.enable_adios && '✅' || '❌' }} · ${{ inputs.debug && '✅' || '❌' }} |"
             echo "| 🧠 BORE scheduler | ${{ inputs.enable_bore && '✅' || '❌' }}${{ inputs.enable_bore && (inputs.bore_default_on && ' · active at boot' || ' · dormant, /proc/sys/kernel/sched_bore') || '' }} |"
             echo "| ⚡ Codegen | AutoFDO + MLGO applied automatically wherever the tree ships a profile and the toolchain carries the model |"
+            echo "| 🛡️ CVE backports | critical fixes from \`kernel_patches/common/cve/<kmi>\` @ \`${{ inputs.patches_ref || 'main' }}\` · per-device result below |"
             echo "| 🫥 Hiding stack | NoMount${{ steps.set-matrix.outputs.susfs_plan != 'off' && ' + SUSFS' || '' }} |"
             echo ""
             echo ""
@@ -759,6 +760,10 @@ jobs:
             
             if [ -n "${{ steps.build.outputs.warnings }}" ]; then
               echo "| **Warnings** | ${{ steps.build.outputs.warnings }} |" >> $GITHUB_STEP_SUMMARY
+            fi
+
+            if [ -n "${{ steps.build.outputs.cve_backports }}" ]; then
+              echo "| **🛡️ CVE backports** | ${{ steps.build.outputs.cve_backports }} |" >> $GITHUB_STEP_SUMMARY
             fi
             
             cat >> $GITHUB_STEP_SUMMARY << EOF
@@ -1155,6 +1160,28 @@ jobs:
           Every kernel above has **SUSFS ${SUSFS_VER}** compiled in, patched from
           [simonpunk/susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) at build time.
           EOF
+          fi
+
+          CVE_TMP=$(mktemp -d)
+          if git clone -q --depth 1 --filter=blob:none --sparse -b "${{ inputs.patches_ref || 'main' }}" \
+               https://github.com/Bouteillepleine/kernel_patches.git "$CVE_TMP/kp" 2>/dev/null &&
+             git -C "$CVE_TMP/kp" sparse-checkout set common/cve >/dev/null 2>&1; then
+            python3 .github/scripts/cve_table.py "$CVE_TMP/kp/common/cve" > "$CVE_TMP/table.md" || : > "$CVE_TMP/table.md"
+          fi
+          if [ -s "$CVE_TMP/table.md" ]; then
+            CVE_COUNT=$(grep -c '^| \[CVE-' "$CVE_TMP/table.md" || true)
+            {
+              echo ""
+              echo "## 🛡️ Security backports"
+              echo ""
+              echo "**${CVE_COUNT}** critical upstream CVE fixes are backported into these kernels (exploited in the wild, app-reachable use-after-free in binder / futex / af_unix / timers / pipe, or remote). Each device applies only what its tree still lacks; its build log lists the result per CVE."
+              echo ""
+              echo "<details><summary>Show the CVE list</summary>"
+              echo ""
+              cat "$CVE_TMP/table.md"
+              echo ""
+              echo "</details>"
+            } >> release_notes.md
           fi
 
           cat << EOF >> release_notes.md
