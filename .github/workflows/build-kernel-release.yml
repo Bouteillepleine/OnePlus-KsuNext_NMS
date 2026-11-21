@@ -447,16 +447,19 @@ jobs:
           
           # Fixes per KMI in the series this run builds against: unique NNNN-CVE-* patches,
           # plus the 6.12 rtmutex fix that has its own step. Empty on API failure.
-          cve_counts=""
+          cve_counts=""; cve_all=""
           cve_ref="${{ inputs.patches_ref || 'main' }}"
           for k in 5.10 5.15 6.1 6.6 6.12; do
-            n=$(gh api "repos/Bouteillepleine/kernel_patches/contents/common/cve/$k?ref=$cve_ref" \
-                  --jq '[.[].name | select(test("^[0-9]{4}-CVE-[0-9]+-[0-9]+(\\.v[0-9]+)?\\.patch$")) | capture("^[0-9]{4}-(?<c>CVE-[0-9]+-[0-9]+)").c] | unique | length' 2>/dev/null) || { cve_counts=""; break; }
+            ids=$(gh api "repos/Bouteillepleine/kernel_patches/contents/common/cve/$k?ref=$cve_ref" \
+                  --jq '[.[].name | select(test("^[0-9]{4}-CVE-[0-9]+-[0-9]+(\\.v[0-9]+)?\\.patch$")) | capture("^[0-9]{4}-(?<c>CVE-[0-9]+-[0-9]+)").c] | unique | .[]' 2>/dev/null) || { cve_counts=""; cve_all=""; break; }
             if [ "$k" = 6.12 ] && gh api "repos/Bouteillepleine/kernel_patches/contents/common/cve/cve-2026-43499-rtmutex-full.patch?ref=$cve_ref" >/dev/null 2>&1; then
-              n=$((n + 1))
+              ids=$(printf '%s\nCVE-2026-43499\n' "$ids" | sort -u)
             fi
+            n=$(printf '%s\n' "$ids" | grep -c . || true)
+            cve_all=$(printf '%s\n%s\n' "$cve_all" "$ids")
             cve_counts="${cve_counts:+$cve_counts · }$k: **$n**"
           done
+          [ -n "$cve_counts" ] && cve_counts="**$(printf '%s\n' "$cve_all" | grep . | sort -u | wc -l) unique** · $cve_counts"
           {
             echo "## 🎯 Build Plan"
             echo ""
