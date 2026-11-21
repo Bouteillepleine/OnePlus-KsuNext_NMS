@@ -1,6 +1,6 @@
 Baka-SU/BakaSU main 7b65bde0710b5e7c6f755545cb15a4abd417f3a8 (BakaSU root impl)
-Bouteillepleine/NoMount-Suite main 4317cdeca23035c51b203857b79f6032b825bce5 (Prism engine src)
-Bouteillepleine/kernel_patches main 47d5540caad1694220114ecc00b7bb954bbe6e72 (our _ghost/_pathhide/_hook)
+Bouteillepleine/NoMount-Suite main 90f351738972f02881541f4d73e20aace34a2ef5 (Prism engine src)
+Bouteillepleine/kernel_patches main 00ae110182ebec99f363b3691e6a6e8fbc23d051 (our _ghost/_pathhide/_hook)
 KernelSU-Next/KernelSU-Next dev aa235b99574b5b349cdb4980bcb98fd58e6abb28 (KSUN root impl)
 ShirkNeko/SukiSU-Ultra main 1439545f12bffe0263690ba862139b70ee5f20cf (SukiSU root impl)
 WildKernels/kernel_patches main 70c394f16d82b0f85a4f07617630d82dde6d203c (hooks + susfs, UNPINNED)
