@@ -445,6 +445,18 @@ jobs:
             build_ts_display="📌 \`$build_ts_input\`"
           fi
           
+          # Fixes per KMI in the series this run builds against: unique NNNN-CVE-* patches,
+          # plus the 6.12 rtmutex fix that has its own step. Empty on API failure.
+          cve_counts=""
+          cve_ref="${{ inputs.patches_ref || 'main' }}"
+          for k in 5.10 5.15 6.1 6.6 6.12; do
+            n=$(gh api "repos/Bouteillepleine/kernel_patches/contents/common/cve/$k?ref=$cve_ref" \
+                  --jq '[.[].name | select(test("^[0-9]{4}-CVE-[0-9]+-[0-9]+(\\.v[0-9]+)?\\.patch$")) | capture("^[0-9]{4}-(?<c>CVE-[0-9]+-[0-9]+)").c] | unique | length' 2>/dev/null) || { cve_counts=""; break; }
+            if [ "$k" = 6.12 ] && gh api "repos/Bouteillepleine/kernel_patches/contents/common/cve/cve-2026-43499-rtmutex-full.patch?ref=$cve_ref" >/dev/null 2>&1; then
+              n=$((n + 1))
+            fi
+            cve_counts="${cve_counts:+$cve_counts · }$k: **$n**"
+          done
           {
             echo "## 🎯 Build Plan"
             echo ""
@@ -462,7 +474,7 @@ jobs:
             echo "| 🧰 ADIOS · Debug artifacts | ${{ inputs.enable_adios && '✅' || '❌' }} · ${{ inputs.debug && '✅' || '❌' }} |"
             echo "| 🧠 BORE scheduler | ${{ inputs.enable_bore && '✅' || '❌' }}${{ inputs.enable_bore && (inputs.bore_default_on && ' · active at boot' || ' · dormant, /proc/sys/kernel/sched_bore') || '' }} |"
             echo "| ⚡ Codegen | AutoFDO + MLGO applied automatically wherever the tree ships a profile and the toolchain carries the model |"
-            echo "| 🛡️ CVE backports | critical fixes from \`kernel_patches/common/cve/<kmi>\` @ \`${{ inputs.patches_ref || 'main' }}\` · per-device result below |"
+            echo "| 🛡️ CVE backports | ${cve_counts:+$cve_counts · }critical fixes from \`kernel_patches/common/cve/<kmi>\` @ \`${{ inputs.patches_ref || 'main' }}\` · per-device result below |"
             echo "| 🫥 Hiding stack | NoMount${{ steps.set-matrix.outputs.susfs_plan != 'off' && ' + SUSFS' || '' }} |"
             echo ""
             echo ""
@@ -1170,11 +1182,12 @@ jobs:
           fi
           if [ -s "$CVE_TMP/table.md" ]; then
             CVE_COUNT=$(grep -c '^| \[CVE-' "$CVE_TMP/table.md" || true)
+            CVE_PER=$(awk -F'|' '/^\| \[CVE-/{n=split($4,k,"·"); for(i=1;i<=n;i++){gsub(/ /,"",k[i]); c[k[i]]++}} END{split("5.10 5.15 6.1 6.6 6.12",o," "); for(i=1;i<=5;i++) if(c[o[i]]) printf "%s%s: **%d**", (s++?" · ":""), o[i], c[o[i]]}' "$CVE_TMP/table.md")
             {
               echo ""
               echo "## 🛡️ Security backports"
               echo ""
-              echo "**${CVE_COUNT}** critical upstream CVE fixes are backported into these kernels (exploited in the wild, app-reachable use-after-free in binder / futex / af_unix / timers / pipe, or remote). Each device applies only what its tree still lacks; its build log lists the result per CVE."
+              echo "**${CVE_COUNT}** critical upstream CVE fixes are backported into these kernels (exploited in the wild, app-reachable use-after-free in binder / futex / af_unix / epoll / timers / pipe / memfd, remote TCP and IP-fragment bugs, or a crafted exFAT drive). Per kernel: ${CVE_PER}. Each device applies only what its tree still lacks; its build log lists the result per CVE."
               echo ""
               echo "<details><summary>Show the CVE list</summary>"
               echo ""
