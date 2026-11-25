@@ -780,6 +780,9 @@ jobs:
             if [ -n "${{ steps.build.outputs.cve_backports }}" ]; then
               echo "| **🛡️ CVE backports** | ${{ steps.build.outputs.cve_backports }} |" >> $GITHUB_STEP_SUMMARY
             fi
+            if [ -n "${{ steps.build.outputs.kmi_check }}" ]; then
+              echo "| **🧬 KMI check** | ${{ steps.build.outputs.kmi_check }} |" >> $GITHUB_STEP_SUMMARY
+            fi
             
             cat >> $GITHUB_STEP_SUMMARY << EOF
           

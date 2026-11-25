@@ -119,6 +119,9 @@ outputs:
   cve_backports:
     description: 'CVE backport results for this device (applied / already present / n/a)'
     value: ${{ steps.cve_summary.outputs.summary }}
+  kmi_check:
+    description: 'KMI check result (ABI symbols / missing / CRC changed)'
+    value: ${{ steps.kmi_check.outputs.summary }}
   zip_name:
     description: 'Name of the generated flashable ZIP'
     value: ${{ steps.create_zip.outputs.zip_name }}
@@ -3023,6 +3026,46 @@ runs:
         echo "============================================"
         echo "::endgroup::"
 
+    - name: KMI check
+      id: kmi_check
+      if: ${{ always() && steps.build_kernel_step.outcome == 'success' }}
+      shell: bash
+      run: |
+        # Report-only: compares the built kernel's exported symbol CRCs with the
+        # tree's GKI ABI, since a missing symbol or changed CRC stops a stock
+        # vendor module from loading.
+        set -euo pipefail
+        cd "$COMMON_KERNEL_FOLDER"
+        ABI=""
+        for f in gki/aarch64/abi.stg android/abi_gki_aarch64.stg android/abi_gki_aarch64.xml; do
+          [ -s "$f" ] && { ABI="$f"; break; }
+        done
+        SYMVERS=""
+        for f in out/Module.symvers out/vmlinux.symvers; do
+          [ -s "$f" ] && { SYMVERS="$f"; break; }
+        done
+        R="$RUNNER_TEMP/kmi_report.txt"
+        if [ -z "$ABI" ] || [ -z "$SYMVERS" ]; then
+          s="not run (abi=${ABI:-none}, symvers=${SYMVERS:-none})"
+        elif ! s=$(python3 -I "$GITHUB_WORKSPACE/.github/scripts/kmi_check.py" "$ABI" "$SYMVERS" "$R"); then
+          s="not run (checker could not parse $ABI or $SYMVERS)"
+        fi
+        echo "KMI: $s"
+        [ -s "$R" ] && cat "$R"
+        echo "summary=$s" >> "$GITHUB_OUTPUT"
+        echo "KMI_SUMMARY=$s" >> "$GITHUB_ENV"
+        {
+          echo "### 🧬 KMI check (${OP_MODEL:-device})"
+          echo ""
+          echo "$s"
+          if [ -s "$R" ] && grep -qE '^(missing|CRC changed)' "$R"; then
+            echo ""
+            echo '```'
+            awk '/^(missing|CRC changed)/{on=1} on && n++ < 200' "$R"
+            echo '```'
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
     - name: Verify inte overlay was baked
       if: ${{ env.INTE_OVERLAY_EMBEDDED == '1' }}
       shell: bash
@@ -3318,6 +3361,9 @@ runs:
           echo "NTSync: ${{ env.OP_NTSYNC }}"
           echo "Droidspaces: ${{ env.OP_DS }}"
           echo "config.gz: ${{ env.STOCK_CONFIG_SPOOF }}"
+          echo ""
+          echo "=== KMI check ==="
+          echo "${KMI_SUMMARY:-not run}"
           echo ""
           echo "=== CVE backports ==="
           echo "${CVE_SUMMARY:-none}"
