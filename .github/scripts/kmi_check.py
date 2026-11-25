@@ -6,7 +6,9 @@ it imports; a missing symbol or a changed CRC stops it from loading.
 
 ABI sources: STG text (6.1+: gki/aarch64/abi.stg, android/abi_gki_aarch64.stg)
 and libabigail XML (5.10/5.15: android/abi_gki_aarch64.xml).
-Built side: Module.symvers or vmlinux.symvers.
+Built side: Module.symvers or vmlinux.symvers. vmlinux.symvers lacks every symbol a
+GKI loadable module exports (bluetooth, can, zsmalloc...), so with it missing symbols
+are not judged; CRCs of what vmlinux exports still are.
 
 usage: kmi_check.py ABI SYMVERS [REPORT]
 Prints one summary line on stdout; the symbol lists go to REPORT.
@@ -62,11 +64,14 @@ def main():
         print(f"kmi_check: nothing parsed (abi={len(abi)} built={len(built)})", file=sys.stderr)
         return 2
 
-    missing = sorted(n for n in abi if n not in built)
+    vmlinux_only = sys.argv[2].endswith("vmlinux.symvers")
+    missing = [] if vmlinux_only else sorted(n for n in abi if n not in built)
     changed = sorted((n, abi[n], built[n]) for n in abi if n in built and built[n] != abi[n])
 
     lines = [f"ABI: {sys.argv[1]}", f"built: {sys.argv[2]}",
-             f"{len(abi)} ABI symbols, {len(built)} exported, {len(missing)} missing, {len(changed)} CRC changed"]
+             f"{len(abi)} ABI symbols, {len(built)} exported, "
+             + ("missing not judged (vmlinux.symvers), " if vmlinux_only else f"{len(missing)} missing, ")
+             + f"{len(changed)} CRC changed"]
     if missing:
         lines += ["", "missing:"] + [f"  {n}" for n in missing]
     if changed:
@@ -75,7 +80,11 @@ def main():
         with open(sys.argv[3], "w", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")
 
-    print(f"{len(abi)} ABI symbols · {len(missing)} missing · {len(changed)} CRC changed")
+    checked = sum(1 for n in abi if n in built)
+    if vmlinux_only:
+        print(f"{checked}/{len(abi)} ABI symbols in vmlinux · {len(changed)} CRC changed (Image-only: module exports not built)")
+    else:
+        print(f"{len(abi)} ABI symbols · {len(missing)} missing · {len(changed)} CRC changed")
     return 0
 
 
