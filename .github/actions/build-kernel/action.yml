@@ -2660,6 +2660,9 @@ runs:
         set +u
         source "$KERNEL_PLATFORM_FOLDER/build/kernel/_setup_env.sh" 2>/dev/null || true
         set -u
+        # Kleaf's _setup_env.sh exports this, but MTK modules repos ship none: without it
+        # gendwarfksyms hashes ANDROID_KABI_RESERVE slots literally and ~2/3 of KMI CRCs drift.
+        export KBUILD_GENDWARFKSYMS_STABLE=1
         
         echo '#!/bin/bash' > "$COMMON_KERNEL_FOLDER/ld-wrapper"
         echo 'ld.lld "$@" --thinlto-jobs=$(nproc --all) ${NMS_LD_MLLVM:-}' >> "$COMMON_KERNEL_FOLDER/ld-wrapper"
