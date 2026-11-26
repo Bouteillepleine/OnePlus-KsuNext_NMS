@@ -97,9 +97,6 @@ on:
           - OP15r
 
           # OnePlus Nord / N series
-          - OP-N6-5.15.180
-          - OP-N6-5.15.197
-          - OP-N6X
           - OP-NORD-3
           - OP-NORD-4
           - OP-NORD-4-6.1.118
