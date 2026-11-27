@@ -3,15 +3,16 @@
   <remote fetch="https://git.codelinaro.org/clo/la" name="clo-la" review="codelinaro.org"/>
   <remote fetch="https://github.com/OnePlusOSS" name="origin"/>
   <remote fetch="https://github.com/Bouteillepleine" name="Bouteillepleine"/>
+  <remote fetch="https://android.googlesource.com" name="aosp"/>
   <default remote="clo-la" revision="dummy_revision" sync-c="true" sync-tags="false"/>
   <project remote="Bouteillepleine" name="AnyKernel3" path="AnyKernel3" revision="suite"/>
-  
-  <project remote="origin" name="android_kernel_oneplus_mt6789" path="kernel-6.12" revision="oneplus/mt6789_b_16.0_pad_lite">
-    <linkfile dest="kernel_platform/common" src="."/>
+
+  <project remote="aosp" name="kernel/common" path="kernel_platform/common" revision="925a103d123c30a84577f29e1573376aacbde94b" clone-depth="1">
+    <linkfile dest="kernel_platform/.source_date_epoch_dir" src="."/>
   </project>
-  
+
   <project remote="origin" name="android_kernel_modules_oneplus_mt6789" path="./" revision="oneplus/mt6789_b_16.0_pad_lite"/>
-  
+
   <project remote="clo-la" name="kernel/prebuilts/build-tools" path="kernel_platform/prebuilts/kernel-build-tools" revision="4ba19a61c7a0d63603e0d1c84eb2b610bff706a4" upstream="refs/heads/ks-kernel.lnx.5.0.r3-rel" groups="ddk">
     <linkfile dest="kernel_platform/build/prebuilts/kernel-build-tools" src="."/>
   </project>
