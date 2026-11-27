@@ -95,7 +95,7 @@ def main():
     if missing:
         lines += ["", "missing:"] + [f"  {n}" for n in missing]
     if benign:
-        lines += ["", "benign CRC changes (kmi_benign.tsv):"] + [f"  {n}: 0x{a:08x} != 0x{b:08x}  # {benign_ok[n]}" for n, a, b in benign]
+        lines += ["", "CRC changed but not used by any stock module (kmi_benign.tsv):"] + [f"  {n}: 0x{a:08x} != 0x{b:08x}  # {benign_ok[n]}" for n, a, b in benign]
     if changed:
         lines += ["", "CRC changed (abi != built):"] + [f"  {n}: 0x{a:08x} != 0x{b:08x}" for n, a, b in changed]
     if len(sys.argv) > 3:
@@ -103,7 +103,7 @@ def main():
             fh.write("\n".join(lines) + "\n")
 
     checked = sum(1 for n in abi if n in built)
-    note = f" · {len(benign)} benign ({', '.join(n for n, _, _ in benign)})" if benign else ""
+    note = f" · {len(benign)} not used ({', '.join(n for n, _, _ in benign)})" if benign else ""
     if vmlinux_only:
         print(f"{checked}/{len(abi)} ABI symbols in vmlinux · {len(changed)} CRC changed{note} (Image-only: module exports not built)")
     else:
