@@ -2310,23 +2310,6 @@ runs:
         echo "CVE_SUMMARY=$s" >> "$GITHUB_ENV"
         echo "CVE backports: $s"
 
-    - name: Apply arb_guard
-      shell: bash
-      run: |
-        set -euo pipefail
-        P="$BOUTEILLE_KERNEL_PATCHES_FOLDER/oneplus/arb_guard/arb_guard-${ANDROID_VER}-${KERNEL_VER}.patch"
-        if [ ! -f "$P" ]; then
-          echo "No arb_guard patch for ${ANDROID_VER}-${KERNEL_VER}"
-          exit 0
-        fi
-        cd "$COMMON_KERNEL_FOLDER"
-        patch -p1 --forward -F0 < "$P"
-        if ! grep -q '^	arb_guard(info);$' kernel/module/main.c; then
-          echo "::error::arb_guard hook missing from load_module()"
-          exit 1
-        fi
-        echo "✅ arb_guard: qcom_scm's anti-rollback commit is stubbed at module load"
-
     - name: Embed module_overlay payloads
       shell: bash
       run: |
