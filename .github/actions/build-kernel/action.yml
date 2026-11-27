@@ -2310,19 +2310,34 @@ runs:
         echo "CVE_SUMMARY=$s" >> "$GITHUB_ENV"
         echo "CVE backports: $s"
 
-    - name: Embed inte overlay module
+    - name: Embed module_overlay payloads
       shell: bash
       run: |
         set -euo pipefail
         MODDIR="$BOUTEILLE_KERNEL_PATCHES_FOLDER/oneplus/module_overlay"
-        KO="$MODDIR/modules/inte_${ANDROID_VER}-${KERNEL_VER}.ko"
         PATCHFILE="$MODDIR/0001-module-Add-module-intercept-and-overlay-mechanism-${ANDROID_VER}-${KERNEL_VER}.patch"
-        if [ ! -f "$KO" ]; then
-          echo "No committed inte.ko for ${ANDROID_VER}-${KERNEL_VER}; skipping module_overlay embed."
+        payloads=()
+        KO="$MODDIR/modules/inte_${ANDROID_VER}-${KERNEL_VER}.ko"
+        if [ -f "$KO" ]; then payloads+=("$KO|inte.ko"); else echo "No committed inte.ko for ${ANDROID_VER}-${KERNEL_VER}"; fi
+        if [ "${OP_ARB_GUARD:-false}" = "true" ]; then
+          SUB=$(awk '/^SUBLEVEL *=/{print $3; exit}' "$COMMON_KERNEL_FOLDER/Makefile")
+          SCM="$MODDIR/modules/qcom-scm_${OP_BRANCH#wild/}_${ANDROID_VER}-${KERNEL_VER}.${SUB}_noarb.ko"
+          if [ ! -f "$SCM" ]; then
+            echo "::error::arb_guard is on but there is no stubbed qcom-scm for this tree: $(basename "$SCM")"
+            exit 1
+          fi
+          python3 -I "$MODDIR/arb_guard/patch_arb.py" --verify "$SCM"
+          payloads+=("$SCM|qcom-scm.ko")
+          echo "ARB_GUARD_EMBEDDED=1" >> "$GITHUB_ENV"
+        else
+          echo "arb_guard off for $OP_MODEL"
+        fi
+        if [ ${#payloads[@]} -eq 0 ]; then
+          echo "No module_overlay payloads; skipping."
           exit 0
         fi
         if [ ! -f "$PATCHFILE" ]; then
-          echo "::error::inte.ko present but module_overlay patch missing: $PATCHFILE"
+          echo "::error::module_overlay payloads present but patch missing: $PATCHFILE"
           exit 1
         fi
         missing=()
@@ -2333,10 +2348,14 @@ runs:
         cd "$COMMON_KERNEL_FOLDER"
         echo "Applying module_overlay patch: $(basename "$PATCHFILE")"
         patch -p1 < "$PATCHFILE"
-        mkdir -p "$COMMON_KERNEL_FOLDER/kernel/module/module_overlay/modules"
-        cp "$KO" "$COMMON_KERNEL_FOLDER/kernel/module/module_overlay/modules/inte.ko"
-        echo "INTE_OVERLAY_EMBEDDED=1" >> "$GITHUB_ENV"
-        echo "✅ embedded $(basename "$KO") as kernel/module/module_overlay/modules/inte.ko"
+        # the success path would otherwise name every swapped module in dmesg
+        sed -i 's/pr_info("module_overlay:/pr_debug("module_overlay:/' kernel/module/main.c kernel/module/module_overlay/module_intercept.c
+        mkdir -p kernel/module/module_overlay/modules
+        for p in "${payloads[@]}"; do
+          cp "${p%%|*}" "kernel/module/module_overlay/modules/${p#*|}"
+          echo "✅ embedded $(basename "${p%%|*}") as kernel/module/module_overlay/modules/${p#*|}"
+          if [ "${p#*|}" = inte.ko ]; then echo "INTE_OVERLAY_EMBEDDED=1" >> "$GITHUB_ENV"; fi
+        done
 
     - name: 🧠 Apply BORE scheduler
       shell: bash
@@ -3080,6 +3099,18 @@ runs:
           exit 1
         fi
         echo "✅ overlay_files.c carries inte ($(grep -c '0x' "$GEN") data lines)"
+
+    - name: Verify qcom-scm ARB overlay was baked
+      if: ${{ env.ARB_GUARD_EMBEDDED == '1' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        GEN="$COMMON_KERNEL_FOLDER/out/kernel/module/module_overlay/overlay_files.c"
+        if [ ! -f "$GEN" ] || ! grep -q '\.name = "qcom_scm"' "$GEN"; then
+          echo "::error::module_overlay embedded no qcom_scm payload ($GEN); stock qcom-scm would commit ARB"
+          exit 1
+        fi
+        echo "✅ overlay_files.c carries qcom_scm"
 
     - name: Build inte overlay module
       id: build_inte
