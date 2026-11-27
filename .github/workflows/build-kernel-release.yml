@@ -1544,6 +1544,25 @@ jobs:
             mkdir -p mgr-work/apk
           }
 
+          # The run that built exactly KSU_SHA, so a dev branch that moved on during our build cannot hand
+          # back a newer manager. Listing runs of a public repo works with this workflow's token; the
+          # artifacts themselves still come through nightly.link.
+          from_upstream_run() {
+            local run a
+            [ -n "${KSU_SHA:-}" ] || return 1
+            run=$(curl -fsSL --retry 3 --retry-delay 5 --retry-connrefused --retry-all-errors \
+                    -H "Authorization: Bearer $GH_TOKEN" \
+                    "https://api.github.com/repos/KernelSU-Next/KernelSU-Next/actions/workflows/build-manager-ci.yml/runs?head_sha=$KSU_SHA&per_page=20" \
+                  | jq -r '[.workflow_runs[] | select(.conclusion == "success")][0].id // empty') || return 1
+            [ -n "$run" ] || { echo "  no successful build-manager-ci run for ${KSU_SHA:0:8}"; return 1; }
+            echo "  build-manager-ci run $run built ${KSU_SHA:0:8}"
+            for a in manager manager-spoofed; do
+              curl -fsSL --retry 3 --retry-delay 5 --retry-connrefused --retry-all-errors -o "mgr-work/$a.zip" \
+                "https://nightly.link/KernelSU-Next/KernelSU-Next/actions/runs/$run/$a.zip" || return 1
+              unzip -oqq "mgr-work/$a.zip" -d mgr-work/apk || return 1
+            done
+          }
+
           from_nightly_link() {
             local a
             [ -n "${KSU_REF:-}" ] || return 1
@@ -1575,7 +1594,7 @@ jobs:
           }
 
           ok=false
-          for source in from_nightly_link from_upstream_release from_mirror; do
+          for source in from_upstream_run from_nightly_link from_upstream_release from_mirror; do
             echo "::group::$source"
             fresh_workdir
             if "$source"; then
