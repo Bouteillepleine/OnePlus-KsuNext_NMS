@@ -2310,6 +2310,23 @@ runs:
         echo "CVE_SUMMARY=$s" >> "$GITHUB_ENV"
         echo "CVE backports: $s"
 
+    - name: Apply arb_guard
+      shell: bash
+      run: |
+        set -euo pipefail
+        P="$BOUTEILLE_KERNEL_PATCHES_FOLDER/oneplus/arb_guard/arb_guard-${ANDROID_VER}-${KERNEL_VER}.patch"
+        if [ ! -f "$P" ]; then
+          echo "No arb_guard patch for ${ANDROID_VER}-${KERNEL_VER}"
+          exit 0
+        fi
+        cd "$COMMON_KERNEL_FOLDER"
+        patch -p1 --forward -F0 < "$P"
+        if ! grep -q '^	arb_guard(info);$' kernel/module/main.c; then
+          echo "::error::arb_guard hook missing from load_module()"
+          exit 1
+        fi
+        echo "✅ arb_guard: qcom_scm's anti-rollback commit is stubbed at module load"
+
     - name: Embed module_overlay payloads
       shell: bash
       run: |
@@ -2319,19 +2336,6 @@ runs:
         payloads=()
         KO="$MODDIR/modules/inte_${ANDROID_VER}-${KERNEL_VER}.ko"
         if [ -f "$KO" ]; then payloads+=("$KO|inte.ko"); else echo "No committed inte.ko for ${ANDROID_VER}-${KERNEL_VER}"; fi
-        if [ "${OP_ARB_GUARD:-false}" = "true" ]; then
-          SUB=$(awk '/^SUBLEVEL *=/{print $3; exit}' "$COMMON_KERNEL_FOLDER/Makefile")
-          SCM="$MODDIR/modules/qcom-scm_${OP_BRANCH#wild/}_${ANDROID_VER}-${KERNEL_VER}.${SUB}_noarb.ko"
-          if [ ! -f "$SCM" ]; then
-            echo "::error::arb_guard is on but there is no stubbed qcom-scm for this tree: $(basename "$SCM")"
-            exit 1
-          fi
-          python3 -I "$MODDIR/arb_guard/patch_arb.py" --verify "$SCM"
-          payloads+=("$SCM|qcom-scm.ko")
-          echo "ARB_GUARD_EMBEDDED=1" >> "$GITHUB_ENV"
-        else
-          echo "arb_guard off for $OP_MODEL"
-        fi
         if [ ${#payloads[@]} -eq 0 ]; then
           echo "No module_overlay payloads; skipping."
           exit 0
@@ -3099,18 +3103,6 @@ runs:
           exit 1
         fi
         echo "✅ overlay_files.c carries inte ($(grep -c '0x' "$GEN") data lines)"
-
-    - name: Verify qcom-scm ARB overlay was baked
-      if: ${{ env.ARB_GUARD_EMBEDDED == '1' }}
-      shell: bash
-      run: |
-        set -euo pipefail
-        GEN="$COMMON_KERNEL_FOLDER/out/kernel/module/module_overlay/overlay_files.c"
-        if [ ! -f "$GEN" ] || ! grep -q '\.name = "qcom_scm"' "$GEN"; then
-          echo "::error::module_overlay embedded no qcom_scm payload ($GEN); stock qcom-scm would commit ARB"
-          exit 1
-        fi
-        echo "✅ overlay_files.c carries qcom_scm"
 
     - name: Build inte overlay module
       id: build_inte
