@@ -780,8 +780,12 @@ jobs:
             if [ -n "${{ steps.build.outputs.cve_backports }}" ]; then
               echo "| **🛡️ CVE backports** | ${{ steps.build.outputs.cve_backports }} |" >> $GITHUB_STEP_SUMMARY
             fi
-            if [ -n "${{ steps.build.outputs.kmi_check }}" ]; then
-              echo "| **🧬 KMI check** | ${{ steps.build.outputs.kmi_check }} |" >> $GITHUB_STEP_SUMMARY
+            kmi="${{ steps.build.outputs.kmi_check }}"
+            if [ -n "$kmi" ]; then
+              if [[ "$kmi" == "not run"* ]]; then mark="➖"
+              elif [[ "$kmi" == *"· 0 CRC changed"* && ( "$kmi" != *missing* || "$kmi" == *"· 0 missing"* ) ]]; then mark="✅"
+              else mark="⚠️"; fi
+              echo "| **🧬 KMI check (${{ matrix.model }})** | $mark $kmi |" >> $GITHUB_STEP_SUMMARY
             fi
             
             cat >> $GITHUB_STEP_SUMMARY << EOF
