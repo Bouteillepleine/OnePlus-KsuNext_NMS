@@ -1,0 +1,2 @@
+# symbol	models (fnmatch globs, comma-separated)	why a CRC change here cannot stop a stock module from loading
+lru_gen_caps	*	MGLRU feature-flag variable no vendor driver imports (stock CPH2621 16.0.5.1301 and 15.0.0.1360 checked)

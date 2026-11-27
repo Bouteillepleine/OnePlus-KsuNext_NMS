@@ -14,6 +14,8 @@ usage: kmi_check.py ABI SYMVERS [REPORT]
 Prints one summary line on stdout; the symbol lists go to REPORT.
 Exit 0 on any comparison, 2 when an input cannot be read or parsed.
 """
+import fnmatch
+import os
 import re
 import sys
 
@@ -50,6 +52,21 @@ def parse_symvers(path):
     return built
 
 
+def load_benign(model):
+    """Symbols whose CRC change is known not to matter for this model (kmi_benign.tsv)."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kmi_benign.tsv")
+    out = {}
+    if not model or not os.path.exists(path):
+        return out
+    for line in open(path, encoding="utf-8"):
+        if line.startswith("#") or not line.strip():
+            continue
+        sym, globs, why = (line.rstrip("\n").split("\t") + ["", ""])[:3]
+        if any(fnmatch.fnmatchcase(model, g.strip()) for g in globs.split(",")):
+            out[sym] = why
+    return out
+
+
 def main():
     if len(sys.argv) < 3:
         print("usage: kmi_check.py ABI SYMVERS [REPORT]", file=sys.stderr)
@@ -66,7 +83,10 @@ def main():
 
     vmlinux_only = sys.argv[2].endswith("vmlinux.symvers")
     missing = [] if vmlinux_only else sorted(n for n in abi if n not in built)
-    changed = sorted((n, abi[n], built[n]) for n in abi if n in built and built[n] != abi[n])
+    benign_ok = load_benign(os.environ.get("OP_MODEL", ""))
+    allchanged = sorted((n, abi[n], built[n]) for n in abi if n in built and built[n] != abi[n])
+    changed = [c for c in allchanged if c[0] not in benign_ok]
+    benign = [c for c in allchanged if c[0] in benign_ok]
 
     lines = [f"ABI: {sys.argv[1]}", f"built: {sys.argv[2]}",
              f"{len(abi)} ABI symbols, {len(built)} exported, "
@@ -74,6 +94,8 @@ def main():
              + f"{len(changed)} CRC changed"]
     if missing:
         lines += ["", "missing:"] + [f"  {n}" for n in missing]
+    if benign:
+        lines += ["", "benign CRC changes (kmi_benign.tsv):"] + [f"  {n}: 0x{a:08x} != 0x{b:08x}  # {benign_ok[n]}" for n, a, b in benign]
     if changed:
         lines += ["", "CRC changed (abi != built):"] + [f"  {n}: 0x{a:08x} != 0x{b:08x}" for n, a, b in changed]
     if len(sys.argv) > 3:
@@ -81,10 +103,11 @@ def main():
             fh.write("\n".join(lines) + "\n")
 
     checked = sum(1 for n in abi if n in built)
+    note = f" · {len(benign)} benign ({', '.join(n for n, _, _ in benign)})" if benign else ""
     if vmlinux_only:
-        print(f"{checked}/{len(abi)} ABI symbols in vmlinux · {len(changed)} CRC changed (Image-only: module exports not built)")
+        print(f"{checked}/{len(abi)} ABI symbols in vmlinux · {len(changed)} CRC changed{note} (Image-only: module exports not built)")
     else:
-        print(f"{len(abi)} ABI symbols · {len(missing)} missing · {len(changed)} CRC changed")
+        print(f"{len(abi)} ABI symbols · {len(missing)} missing · {len(changed)} CRC changed{note}")
     return 0
 
 
